@@ -11,7 +11,7 @@
 import 'server-only'
 import { supabaseAdmin } from '../supabase-admin'
 import { cbGet, cloudbedsConfigured } from './cloudbeds'
-import { loadStays, inScope, type Scope } from './segments'
+import { loadStays, loadBooked, narrow, filterActive, type Scope, type StayFilter } from './segments'
 
 const ymd = (d: Date) => d.toISOString().slice(0, 10)
 const addDays = (s: string, n: number) => ymd(new Date(Date.parse(s + 'T12:00:00Z') + n * 86400000))
@@ -21,16 +21,21 @@ const num = (v: any) => (v == null || isNaN(Number(v)) ? 0 : Number(v))
 /** The booking channel, in a few names a person recognises. */
 export function channelName(src: string | null | undefined): string {
   const s = String(src || '').toLowerCase()
-  if (!s) return 'Direct'
+  if (!s) return 'Website / direct'
   if (/airbnb/.test(s)) return 'Airbnb'
-  if (/booking\.?com|booking/.test(s)) return 'Booking.com'
+  // Before Booking.com: Cloudbeds calls the hotel's own site "Website/Booking Engine", and a bare
+  // "booking" test filed those 51 direct stays under Booking.com (found 2026-11-23).
+  if (/website|booking engine|be-api|^direct$|^manual$/.test(s)) return 'Website / direct'
+  if (/booking\.?com/.test(s)) return 'Booking.com'
   if (/expedia|hotels\.com|orbitz|travelocity|hotwire/.test(s)) return 'Expedia group'
   if (/vrbo|homeaway/.test(s)) return 'Vrbo'
   if (/google/.test(s)) return 'Google'
-  if (/agoda/.test(s)) return 'Agoda'
+  if (/agoda|priceline/.test(s)) return 'Agoda / Priceline'
+  if (/hotel ?tonight/.test(s)) return 'HotelTonight'
   if (/hostel/.test(s)) return 'Hostelworld'
   if (/walk|front ?desk|phone|email/.test(s)) return 'Walk-in / phone'
-  if (/website|booking engine|direct|own/.test(s)) return 'Website / direct'
+  if (/^owner/.test(s)) return 'Owner stay'
+  if (/comp|house/.test(s)) return 'Comp / house'
   return src as string
 }
 
@@ -50,7 +55,8 @@ function windowStats(live: any[], from: string, to: string, rooms: number) {
   return { bookings, nights, revenue: Math.round(revenue), adr: nights ? Math.round(revenue / nights) : null, occupancy: rooms ? Math.round((nights / (rooms * days)) * 1000) / 10 : null, revpar: rooms ? Math.round(revenue / (rooms * days)) : null, days }
 }
 
-export async function gardenRevenue(opts: { from?: string; to?: string; ahead?: number; scope?: Scope } = {}) {
+export async function gardenRevenue(opts: { from?: string; to?: string; ahead?: number; scope?: Scope; filter?: StayFilter } = {}) {
+  const filter = filterActive(opts.filter) ? opts.filter! : null
   const scope: Scope = opts.scope === 'garden' || opts.scope === 'botanica' ? opts.scope : 'all'
   const db = supabaseAdmin()
   const t0 = todayET()
@@ -62,15 +68,15 @@ export async function gardenRevenue(opts: { from?: string; to?: string; ahead?: 
   const fEnd = addDays(t0, ahead - 1)
 
   const [{ data: res }, { data: cal }, { data: chans }, { data: pays }, roomsQ] = await Promise.all([
-    db.from('garden_reservations').select('id,status,check_in,check_out,nights,total,balance,source,room_ids,room_names,guest_name,booked_at').lte('check_in', to).gte('check_out', from).limit(5000),
+    db.from('garden_sync_status').select('entity,last_sync_at,last_error').in('entity', ['reservations', 'totals']),
     db.from('garden_calendar').select('room_type_id,room_type,date,available,total,rate,min_stay,closed').gte('date', t0).lte('date', fEnd).limit(30000),
     db.from('garden_channels').select('id,name,kind,status').order('name'),
     db.from('garden_payments').select('kind,amount,paid_at').gte('paid_at', new Date(Date.now() - 30 * 86400000).toISOString()),
     db.from('garden_rooms').select('id,name,room_type_id,virtual:raw->isVirtual'),
   ])
   const [prevQ, bookedQ, payQ, covQ, { getSetting }] = await Promise.all([
-    db.from('garden_reservations').select('status,check_in,check_out,nights,total,room_ids').not('status', 'in', '(canceled,no_show)').lte('check_in', prevTo).gte('check_out', prevFrom).limit(5000),
-    db.from('garden_reservations').select('status,total,source,booked_at,room_names').gte('booked_at', from).lt('booked_at', addDays(to, 1)).limit(5000),
+    Promise.resolve(null),
+    loadBooked(from, to),
     db.from('garden_payments').select('kind,amount,paid_at').gte('paid_at', from).lt('paid_at', addDays(to, 1)).limit(5000),
     db.from('garden_reservations').select('check_out').lt('nights', 30).order('check_out').limit(1),
     import('../app-settings'),
@@ -81,19 +87,21 @@ export async function gardenRevenue(opts: { from?: string; to?: string; ahead?: 
   // Botanica units still in Guesty count as rooms, and their stays as bookings (reporting only).
   // Every stay, Cloudbeds and Guesty, cut by room into Garden / Botanica (lib/garden/segments).
   const seg = await loadStays(prevFrom, to)
-  const scoped = seg.stays.map(x => inScope(x, scope)).filter(Boolean) as any[]
-  const asRow = (x: any) => ({ id: x.id, status: x.status, check_in: x.checkIn, check_out: x.checkOut, nights: x.nights, total: x.total, balance: x.balance, source: x.source, room_ids: x.parts.map((p: any) => p.room), room_names: x.rooms, guest_name: x.guest, booked_at: x.bookedAt, origin: x.origin })
+  const N = narrow(seg, scope, filter, channelName)
+  const scoped = N.stays as any[]
+  void prevQ
+  const asRow = (x: any) => ({ id: x.id, status: x.status, check_in: x.checkIn, check_out: x.checkOut, nights: x.nights, total: x.total, balance: x.balance, source: x.source, room_ids: x.parts.map((p: any) => p.room), room_names: x.rooms, guest_name: x.guest, booked_at: x.bookedAt, origin: x.origin, basis: x.basis })
   // Sellable rooms per type: the physical (non-virtual) rooms Cloudbeds lists under it. The
   // calendar carries what is left per night, not the type's size, so the size comes from here.
   const RM = ((roomsQ.data || []) as any[]).filter(r => r.virtual !== true && r.virtual !== 'true')
-  const segRooms = seg.rooms.filter(r => scope === 'all' || r.segment === scope)
+  const segRooms = N.rooms
   const rooms = segRooms.length
   const unitsOf: Record<string, number> = {}
   for (const r of RM) unitsOf[String(r.room_type_id)] = (unitsOf[String(r.room_type_id)] || 0) + 1
 
   // ── On the books ────────────────────────────────────────────────────────────────────────────
-  void res
-  const R = scoped.filter(x => x.checkIn <= to && x.checkOut >= from).map(asRow)
+  // A stay counts in a period when at least one of its nights is in it (a check-out ON the first day is not).
+  const R = scoped.filter(x => x.checkIn <= to && x.checkOut > from).map(asRow)
   const live = R.filter(r => r.status !== 'canceled' && r.status !== 'no_show')
   const cancelled = R.filter(r => r.status === 'canceled' || r.status === 'no_show')
   const lo = Date.parse(from + 'T00:00:00Z'), hi = Date.parse(to + 'T00:00:00Z') + 86400000
@@ -176,8 +184,16 @@ export async function gardenRevenue(opts: { from?: string; to?: string; ahead?: 
   const fwdUnits = forward.reduce((a, d) => a + d.units, 0), fwdSold = forward.reduce((a, d) => a + d.sold, 0)
   return {
     from, to, ahead, rooms, today, collected, spanDays, coverageFrom,
-    prev: { from: prevFrom, to: prevTo, ...windowStats(scoped.filter(x => x.status !== 'canceled' && x.status !== 'no_show' && x.checkIn <= prevTo && x.checkOut >= prevFrom).map(asRow), prevFrom, prevTo, rooms) },
-    booked: (() => { const segOf: Record<string, string> = {}; for (const r of seg.rooms) segOf[r.name] = r.segment; const B = ((bookedQ.data || []) as any[]).filter(b => scope === 'all' || (Array.isArray(b.room_names) && b.room_names.length ? b.room_names.some((n: string) => segOf[n] === scope) : scope === 'garden')); const L = B.filter(b => b.status !== 'canceled' && b.status !== 'no_show'); return { bookings: L.length, revenue: Math.round(L.reduce((a, b) => a + num(b.total), 0)), cancelled: B.length - L.length } })(),
+    // When Cloudbeds was last read, what the money figure is, and whether any read stopped short.
+    syncAt: (((res || []) as any[]).find(x => x.entity === 'reservations')?.last_sync_at) || null, totalsAt: (((res || []) as any[]).find(x => x.entity === 'totals')?.last_sync_at) || null,
+    basis: { room: live.filter(r => r.basis === 'room').length, gross: live.filter(r => r.basis !== 'room').length },
+    partial: !!seg.partial || !!(bookedQ as any).partial,
+    filter: filter || {},
+    // What the filter bar can offer: every channel, room type and wing this side of the property has in the period.
+    options: (() => { const base = narrow(seg, scope, null, channelName); const cs: Record<string, number> = {}; for (const x of base.stays) if (x.checkIn <= to && x.checkOut > from) cs[channelName(x.source)] = (cs[channelName(x.source)] || 0) + 1; const ty: Record<string, number> = {}, wg: Record<string, number> = {}; for (const r of base.rooms) { ty[r.type] = (ty[r.type] || 0) + 1; wg[r.wing] = (wg[r.wing] || 0) + 1 }
+      return { channels: Object.entries(cs).sort((a, b) => b[1] - a[1]).map(([name, n]) => ({ name, n })), types: Object.entries(ty).sort((a, b) => b[1] - a[1]).map(([name, n]) => ({ name, n })), wings: Object.entries(wg).sort((a, b) => a[0].localeCompare(b[0], undefined, { numeric: true })).map(([name, n]) => ({ name, n })) } })(),
+    prev: { from: prevFrom, to: prevTo, ...windowStats(scoped.filter(x => x.status !== 'canceled' && x.status !== 'no_show' && x.checkIn <= prevTo && x.checkOut > prevFrom).map(asRow), prevFrom, prevTo, rooms) },
+    booked: (() => { const B = narrow({ rooms: seg.rooms, stays: (bookedQ as any).stays }, scope, filter, channelName).stays; const L = B.filter(b => b.status !== 'canceled' && b.status !== 'no_show'); return { bookings: L.length, revenue: Math.round(L.reduce((a, b) => a + num(b.total), 0)), nights: L.reduce((a, b) => a + b.nights * b.parts.length, 0), cancelled: B.length - L.length } })(),
     byDay: Object.entries(day).sort(([a], [b]) => a.localeCompare(b)).map(([date, v]) => ({ date, nights: v.nights, revenue: Math.round(v.revenue), occupancy: rooms ? Math.round((v.nights / rooms) * 1000) / 10 : null, adr: v.nights ? Math.round(v.revenue / v.nights) : null, arrivals: v.arrivals, departures: v.departures })),
     books: { bookings: live.length, cancelled: cancelled.length, nights, revenue: Math.round(revenue), adr: nights ? Math.round(revenue / nights) : null, occupancy: rooms ? Math.round((nights / (rooms * windowDays)) * 1000) / 10 : null, revpar: rooms ? Math.round(revenue / (rooms * windowDays)) : null, pickup7: { bookings: pickup7.length, revenue: Math.round(pickup7.reduce((a, r) => a + num(r.total), 0)) } },
     byChannel, byMonth: Object.entries(month).sort(([a], [b]) => a.localeCompare(b)).map(([m, v]) => ({ month: m, nights: v.nights, revenue: Math.round(v.revenue), adr: v.nights ? Math.round(v.revenue / v.nights) : null })),
@@ -185,9 +201,10 @@ export async function gardenRevenue(opts: { from?: string; to?: string; ahead?: 
     types, channels,
     scope, segments: { all: seg.rooms.length, garden: seg.rooms.filter(r => r.segment === 'garden').length, botanica: seg.rooms.filter(r => r.segment === 'botanica').length, blocked: segRooms.filter(r => r.blocked).length },
     guesty: { units: 0, bookings: R.filter(r => r.origin === 'guesty' && r.status !== 'canceled').length, revenue: Math.round(R.filter(r => r.origin === 'guesty' && r.status !== 'canceled').reduce((a, r) => a + num(r.total), 0)) },
-    bookings: live.slice().sort((a, b) => String(a.check_in).localeCompare(String(b.check_in))).slice(0, 400).map(r => ({
+    bookings: live.slice().sort((a, b) => String(a.check_in).localeCompare(String(b.check_in))).slice(0, 1500).map(r => ({
       id: r.id, guest: r.guest_name || null, rooms: r.room_names || null, checkIn: r.check_in, checkOut: r.check_out, nights: num(r.nights) || null,
       channel: channelName(r.source), total: Math.round(num(r.total)), balance: r.balance != null ? Math.round(num(r.balance)) : null, status: r.status, bookedAt: r.booked_at || null, origin: r.origin,
     })),
+    bookingsTotal: live.length,
   }
 }

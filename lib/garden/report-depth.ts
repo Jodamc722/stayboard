@@ -5,7 +5,7 @@
 // Everything is counted night by night per room from lib/garden/segments (a stay crossing the edge of
 // the period, or sitting in rooms on both sides, is split), so the three columns always add up.
 import 'server-only'
-import { loadStays, inScope, type Scope, type SegRoom, type SegStay, SEGMENT_LABEL } from './segments'
+import { loadStays, narrow, leadDays, filterActive, type Scope, type SegRoom, type SegStay, type StayFilter, SEGMENT_LABEL } from './segments'
 import { channelName } from './revenue'
 
 const DAY = 86400000
@@ -19,12 +19,12 @@ type Agg = { nights: number; revenue: number; stays: number }
 const agg = (): Agg => ({ nights: 0, revenue: 0, stays: 0 })
 const line = (a: Agg, rooms: number, days: number) => ({ nights: a.nights, revenue: r0(a.revenue), stays: a.stays, adr: a.nights ? r0(a.revenue / a.nights) : null, occupancy: rooms && days ? r1((a.nights / (rooms * days)) * 100) : null, revpar: rooms && days ? r0(a.revenue / (rooms * days)) : null })
 
-function summary(stays: SegStay[], rooms: SegRoom[], scope: Scope, from: string, to: string) {
+function summary(all: { rooms: SegRoom[]; stays: SegStay[] }, scope: Scope, from: string, to: string, f: StayFilter | null) {
+  const N = narrow(all, scope, f, channelName)
   const lo = ms(from), hi = ms(to) + DAY, days = Math.round((hi - lo) / DAY)
-  const R = rooms.filter(r => scope === 'all' || r.segment === scope)
+  const R = N.rooms
   const a = agg(); let cancelled = 0, lost = 0, owed = 0, owedN = 0, arrivals = 0
-  for (const st of stays) {
-    const x = inScope(st, scope); if (!x) continue
+  for (const x of N.stays) {
     if (!isLive(x)) { if (x.checkIn <= to && x.checkOut > from) { cancelled++; lost += x.total } continue }
     const n = Math.max(0, Math.round((Math.min(hi, ms(x.checkOut)) - Math.max(lo, ms(x.checkIn))) / DAY))
     if (n <= 0) continue
@@ -35,12 +35,15 @@ function summary(stays: SegStay[], rooms: SegRoom[], scope: Scope, from: string,
   return { scope, label: SEGMENT_LABEL[scope], rooms: R.length, blocked: R.filter(r => r.blocked).length, days, ...line(a, R.length, days), arrivals, cancelled, cancelRate: a.stays + cancelled ? r0((cancelled / (a.stays + cancelled)) * 100) : 0, lostRevenue: r0(lost), owed: r0(owed), owedStays: owedN, avgStay: a.stays ? r1(a.nights / a.stays) : null }
 }
 
-export async function gardenDepth(from: string, to: string, scope: Scope = 'all') {
-  const { rooms, stays } = await loadStays(from, to)
+export async function gardenDepth(from: string, to: string, scope: Scope = 'all', filter?: StayFilter | null) {
+  const f = filterActive(filter) ? filter! : null
+  const all = await loadStays(from, to)
+  const { rooms } = all
+  const N = narrow(all, scope, f, channelName)
   const lo = ms(from), hi = ms(to) + DAY, days = Math.round((hi - lo) / DAY)
-  const R = rooms.filter(r => scope === 'all' || r.segment === scope)
+  const R = N.rooms
   const roomBy: Record<string, SegRoom> = {}; for (const r of rooms) roomBy[r.name] = r
-  const S = stays.map(st => inScope(st, scope)).filter(Boolean) as (SegStay & { rooms: string[] })[]
+  const S = N.stays
   const live = S.filter(isLive)
 
   const month: Record<string, Agg> = {}, dow: Agg[] = Array.from({ length: 7 }, agg), dowDays = [0, 0, 0, 0, 0, 0, 0]
@@ -83,7 +86,7 @@ export async function gardenDepth(from: string, to: string, scope: Scope = 'all'
 
   return {
     from, to, days, scope, label: SEGMENT_LABEL[scope],
-    split: (['all', 'garden', 'botanica'] as Scope[]).map(sc => summary(stays, rooms, sc, from, to)),
+    split: (['all', 'garden', 'botanica'] as Scope[]).map(sc => summary(all, sc, from, to, f)),
     byMonth: Object.keys(monthDays).sort().map(m => ({ month: m, ...line(month[m] || agg(), R.length, monthDays[m]) })),
     byDow: [1, 2, 3, 4, 5, 6, 0].map(i => ({ day: DOW[i], ...line(dow[i], R.length, dowDays[i]) })),
     byWing: Object.keys(wingN).sort((a, b) => a.localeCompare(b, undefined, { numeric: true })).map(w => ({ wing: w, rooms: wingN[w], segment: R.find(r => r.wing === w)?.segment || 'garden', ...line(wing[w] || agg(), wingN[w], days) })),
@@ -93,5 +96,18 @@ export async function gardenDepth(from: string, to: string, scope: Scope = 'all'
     byChannel: Object.entries(chan).map(([channel, c]) => ({ channel, ...line(c, 0, 0), share: totalRev ? r0((c.revenue / totalRev) * 100) : 0, lead: c.leadN ? r0(c.lead / c.leadN) : null, cancelled: c.cancelled, cancelRate: c.stays + c.cancelled ? r0((c.cancelled / (c.stays + c.cancelled)) * 100) : 0 })).sort((a, b) => b.revenue - a.revenue),
     byLos: LOS.map((label, i) => ({ label, ...line(los[i], 0, 0) })), byLead: LEAD.map((label, i) => ({ label, ...line(lead[i], 0, 0) })),
     owed: owedList,
+    partial: !!all.partial, filter: f || {},
+    // THE CUBE (Jon, 2026-11-23: "multiple ways of viewing data, booking window, LOS, etc"): one line per
+    // stay per room with its nights and revenue INSIDE the period, and what it can be grouped by. The page
+    // groups it any way asked (components/GardenViews). No guest name on it.
+    //   c channel · l nights of the whole stay · d days booked ahead (null unknown) · a arrival · b booked on
+    //   s side · w wing · t room type · n nights in the period · r revenue in the period · x 1 = cancelled / no-show
+    //   k share of one stay this line is (1 / rooms on the stay), so stays add up to whole numbers
+    cube: S.flatMap(x => {
+      const a = Math.max(lo, ms(x.checkIn)), b = Math.min(hi, ms(x.checkOut)), n = Math.max(0, Math.round((b - a) / DAY))
+      if (n <= 0) return []
+      const dead = !isLive(x), d = leadDays(x)
+      return x.parts.map(p => { const rm = roomBy[p.room]; return { c: channelName(x.source), l: x.nights, d, a: x.checkIn, b: x.bookedAt ? String(x.bookedAt).slice(0, 10) : null, s: p.segment, w: rm?.wing || 'No room yet', t: rm?.type || 'No room yet', n, r: Math.round((p.total / x.nights) * n * 100) / 100, x: dead ? 1 : 0, k: Math.round((1 / x.parts.length) * 1000) / 1000 } })
+    }),
   }
 }

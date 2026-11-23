@@ -27,7 +27,28 @@ export type StayPart = { room: string; segment: Segment; total: number }
 export type SegStay = {
   id: string; origin: 'cloudbeds' | 'guesty'; status: string; guest: string | null; checkIn: string; checkOut: string; nights: number
   source: string | null; bookedAt: string | null; balance: number | null; total: number; parts: StayPart[]
+  /** What `total` is: 'room' = room revenue before taxes and fees, 'gross' = Cloudbeds' reservation total (taxes and fees in it). */
+  basis: 'room' | 'gross'
 }
+/** FILTERS (Jon, 2026-11-23: "make sure we have filter options always, for any report"). Every field
+ *  optional; an empty filter changes nothing. Channel names are the grouped ones (lib/garden/revenue
+ *  channelName). los = nights of the whole stay; lead = days between booking and arrival. */
+export type StayFilter = { channels?: string[]; types?: string[]; wings?: string[]; losMin?: number; losMax?: number; leadMin?: number; leadMax?: number; origin?: 'cloudbeds' | 'guesty' }
+export const filterActive = (f?: StayFilter | null) => !!f && !!((f.channels && f.channels.length) || (f.types && f.types.length) || (f.wings && f.wings.length) || f.losMin != null || f.losMax != null || f.leadMin != null || f.leadMax != null || f.origin)
+const D = /^\d{1,4}$/
+/** Read a filter from a query string: ch, rt, wing (| separated), los and lead ("min-max", either side blank), origin. */
+export function parseFilter(sp: { get(k: string): string | null }): StayFilter {
+  const list = (k: string) => (sp.get(k) || '').split('|').map(x => x.trim()).filter(Boolean).slice(0, 60)
+  const range = (k: string): [number | undefined, number | undefined] => { const m = (sp.get(k) || '').split('-'); const a = D.test(m[0] || '') ? Number(m[0]) : undefined, b = D.test(m[1] || '') ? Number(m[1]) : undefined; return [a, b] }
+  const [losMin, losMax] = range('los'), [leadMin, leadMax] = range('lead')
+  const o = sp.get('origin')
+  const f: StayFilter = {}
+  if (list('ch').length) f.channels = list('ch'); if (list('rt').length) f.types = list('rt'); if (list('wing').length) f.wings = list('wing')
+  if (losMin != null) f.losMin = losMin; if (losMax != null) f.losMax = losMax; if (leadMin != null) f.leadMin = leadMin; if (leadMax != null) f.leadMax = leadMax
+  if (o === 'cloudbeds' || o === 'guesty') f.origin = o
+  return f
+}
+export const leadDays = (st: { checkIn: string; bookedAt: string | null }): number | null => { if (!st.bookedAt) return null; const d = Math.round((Date.parse(st.checkIn + 'T00:00:00Z') - Date.parse(String(st.bookedAt).slice(0, 10) + 'T00:00:00Z')) / 86400000); return Number.isFinite(d) && d >= 0 ? d : null }
 const s = (v: any) => (v == null ? '' : String(v))
 const num = (v: any) => { const n = Number(v); return Number.isFinite(n) ? n : 0 }
 export const roomNumber = (name: string) => (s(name).match(/\b(\d{3,4})\b/) || [])[1] || ''
@@ -51,41 +72,86 @@ export async function segmentRooms(): Promise<{ rooms: SegRoom[]; botanica: Set<
 }
 
 /** Stays touching [from, to] (cancelled included, by status), each split into rooms with a segment. */
-export async function loadStays(from: string, to: string): Promise<{ rooms: SegRoom[]; stays: SegStay[] }> {
+const nightsOf = (ci: string, co: string, n: any) => Math.max(1, num(n) || Math.round((Date.parse(co) - Date.parse(ci)) / 86400000))
+const CB_COLS = 'id,status,guest_name,check_in,check_out,nights,total,balance,source,room_names,booked_at'
+const GY_COLS = 'id,listing_id,status,check_in,check_out,nights,source,guest_name,created_at,accom:raw->money->>fareAccommodationAdjusted,clean:raw->money->>fareCleaning,balance:raw->money->>balanceDue'
+/** One Cloudbeds reservation as a stay, cut by room. */
+function fromCb(r: any, botanica: Set<string>): SegStay | null {
+  const ci = s(r.check_in).slice(0, 10), co = s(r.check_out).slice(0, 10)
+  if (!ci || !co) return null
+  const names: string[] = Array.isArray(r.room_names) ? r.room_names.map(s).filter(Boolean) : []
+  const net = r.room_revenue != null && Number.isFinite(Number(r.room_revenue)) ? Number(r.room_revenue) : null
+  const total = net != null ? net : num(r.total)
+  // No room yet: it is the hotel's own booking until a room says otherwise.
+  const parts: StayPart[] = names.length ? names.map(nm => ({ room: nm, segment: botanica.has(nm) ? 'botanica' : 'garden', total: total / names.length })) : [{ room: '', segment: 'garden', total }]
+  return { id: s(r.id), origin: 'cloudbeds', status: s(r.status), guest: r.guest_name || null, checkIn: ci, checkOut: co, nights: nightsOf(ci, co, r.nights), source: r.source || null, bookedAt: r.booked_at || null, balance: r.balance != null ? num(r.balance) : null, total, parts, basis: net != null ? 'room' : 'gross' }
+}
+/** One Guesty Botanica reservation as a stay; null when Cloudbeds already holds it or it is not a booking. */
+function fromGy(r: any, listingRoom: Record<string, string>, inCb: Set<string>): SegStay | null {
+  const ci = s(r.check_in).slice(0, 10), co = s(r.check_out).slice(0, 10)
+  if (!ci || !co) return null
+  if (inCb.has(s(r.guest_name).trim().toLowerCase() + '|' + ci)) return null   // Cloudbeds already holds it
+  const st = s(r.status).toLowerCase()
+  const status = /cancel|declin|expired|closed/.test(st) ? 'canceled' : st === 'checked_in' || st === 'checked_out' ? st : /confirm|reserv/.test(st) ? 'confirmed' : 'other'
+  if (status === 'other') return null   // inquiries and unconfirmed holds are not bookings
+  // The Botanica deal: the owner keeps cleaning, so a stay's revenue is accommodation + cleaning.
+  const total = Math.round((num(r.accom) + num(r.clean)) * 100) / 100
+  return { id: 'gy:' + s(r.id), origin: 'guesty', status, guest: r.guest_name || null, checkIn: ci, checkOut: co, nights: nightsOf(ci, co, r.nights), source: r.source || null, bookedAt: r.created_at || null, balance: r.balance != null ? num(r.balance) : null, total, basis: 'room', parts: [{ room: listingRoom[s(r.listing_id)] || '', segment: 'botanica', total }] }
+}
+
+let _netCol: { at: number; has: boolean } | null = null
+/** Is garden_reservations.room_revenue there yet (migration 181)? Asked once every ten minutes. */
+export async function hasRoomRevenue(): Promise<boolean> {
+  if (_netCol && Date.now() - _netCol.at < 600000) return _netCol.has
+  let has = false
+  try { const { error } = await supabaseAdmin().from('garden_reservations').select('room_revenue').limit(1); has = !error } catch { has = false }
+  _netCol = { at: Date.now(), has }
+  return has
+}
+
+export async function loadStays(from: string, to: string): Promise<{ rooms: SegRoom[]; stays: SegStay[]; partial: boolean }> {
   const db = supabaseAdmin()
   const { rooms, botanica, listingRoom } = await segmentRooms()
   const ids = Object.keys(listingRoom)
+  // room_revenue (migration 181) is Cloudbeds' own figure before taxes and fees. Until the column exists
+  // the read falls back to the reservation total, and every stay says which one it carries (basis).
+  const cols = CB_COLS + ((await hasRoomRevenue()) ? ',room_revenue' : '')
   const [cb, gy] = await Promise.all([
-    pageRows<any>((a, b) => db.from('garden_reservations').select('id,status,guest_name,check_in,check_out,nights,total,balance,source,room_names,booked_at').lte('check_in', to).gte('check_out', from).order('id').range(a, b), 10),
+    pageRows<any>((a, b) => db.from('garden_reservations').select(cols).lte('check_in', to).gte('check_out', from).order('id').range(a, b), 20),
     ids.length ? pageRows<any>((a, b) => db.from('guesty_reservations')
-      .select('id,listing_id,status,check_in,check_out,nights,source,guest_name,created_at,accom:raw->money->>fareAccommodationAdjusted,clean:raw->money->>fareCleaning,balance:raw->money->>balanceDue')
-      .in('listing_id', ids).lte('check_in', to).gt('check_out', from).order('id').range(a, b), 10) : Promise.resolve({ rows: [] as any[] }),
+      .select(GY_COLS)
+      .in('listing_id', ids).lte('check_in', to).gt('check_out', from).order('id').range(a, b), 20) : Promise.resolve({ rows: [] as any[], truncated: false }),
   ])
-  const nightsOf = (ci: string, co: string, n: any) => Math.max(1, num(n) || Math.round((Date.parse(co) - Date.parse(ci)) / 86400000))
-  const stays: SegStay[] = []
   const inCb = new Set<string>()
-  for (const r of (cb.rows as any[])) {
-    const ci = s(r.check_in).slice(0, 10), co = s(r.check_out).slice(0, 10)
-    if (!ci || !co) continue
-    inCb.add(s(r.guest_name).trim().toLowerCase() + '|' + ci)
-    const names: string[] = Array.isArray(r.room_names) ? r.room_names.map(s).filter(Boolean) : []
-    const total = num(r.total)
-    // No room yet: it is the hotel's own booking until a room says otherwise.
-    const parts: StayPart[] = names.length ? names.map(nm => ({ room: nm, segment: botanica.has(nm) ? 'botanica' : 'garden', total: total / names.length })) : [{ room: '', segment: 'garden', total }]
-    stays.push({ id: s(r.id), origin: 'cloudbeds', status: s(r.status), guest: r.guest_name || null, checkIn: ci, checkOut: co, nights: nightsOf(ci, co, r.nights), source: r.source || null, bookedAt: r.booked_at || null, balance: r.balance != null ? num(r.balance) : null, total, parts })
+  const stays: SegStay[] = []
+  for (const r of (cb.rows as any[])) { const st = fromCb(r, botanica); if (st) { inCb.add(s(r.guest_name).trim().toLowerCase() + '|' + st.checkIn); stays.push(st) } }
+  for (const r of (gy.rows as any[])) { const st = fromGy(r, listingRoom, inCb); if (st) stays.push(st) }
+  // partial = a read stopped early (an error or the page ceiling): the numbers would be short, so say so.
+  return { rooms, stays, partial: !!(cb as any).truncated || !!(gy as any).truncated }
+}
+
+/** Bookings MADE in [from, to], for any stay date (Cloudbeds by its created date, Guesty Botanica by
+ *  its own), cancelled ones included by status — the same stay shape, so scope and filters apply. */
+export async function loadBooked(from: string, to: string): Promise<{ stays: SegStay[]; partial: boolean }> {
+  const db = supabaseAdmin()
+  const { botanica, listingRoom } = await segmentRooms()
+  const ids = Object.keys(listingRoom)
+  const end = new Date(Date.parse(to + 'T00:00:00Z') + 86400000).toISOString().slice(0, 10)
+  const cols = CB_COLS + ((await hasRoomRevenue()) ? ',room_revenue' : '')
+  const [cb, gy] = await Promise.all([
+    pageRows<any>((a, b) => db.from('garden_reservations').select(cols).gte('booked_at', from).lt('booked_at', end).order('id').range(a, b), 20),
+    ids.length ? pageRows<any>((a, b) => db.from('guesty_reservations').select(GY_COLS).in('listing_id', ids).gte('created_at', from).lt('created_at', end).order('id').range(a, b), 20) : Promise.resolve({ rows: [] as any[], truncated: false }),
+  ])
+  const inCb = new Set<string>(), stays: SegStay[] = []
+  for (const r of (cb.rows as any[])) { const st = fromCb(r, botanica); if (st) { inCb.add(s(r.guest_name).trim().toLowerCase() + '|' + st.checkIn); stays.push(st) } }
+  // A Guesty stay Cloudbeds holds may have been created outside this window there: check by guest + arrival.
+  const gyRows = gy.rows as any[]
+  if (gyRows.length) {
+    const cis = Array.from(new Set(gyRows.map(r => s(r.check_in).slice(0, 10)).filter(Boolean)))
+    for (let i = 0; i < cis.length; i += 150) { const { data } = await db.from('garden_reservations').select('guest_name,check_in').in('check_in', cis.slice(i, i + 150)).limit(1000); for (const r of ((data || []) as any[])) inCb.add(s(r.guest_name).trim().toLowerCase() + '|' + s(r.check_in).slice(0, 10)) }
   }
-  for (const r of (gy.rows as any[])) {
-    const ci = s(r.check_in).slice(0, 10), co = s(r.check_out).slice(0, 10)
-    if (!ci || !co) continue
-    if (inCb.has(s(r.guest_name).trim().toLowerCase() + '|' + ci)) continue   // Cloudbeds already holds it
-    const st = s(r.status).toLowerCase()
-    const status = /cancel|declin|expired|closed/.test(st) ? 'canceled' : st === 'checked_in' || st === 'checked_out' ? st : /confirm|reserv/.test(st) ? 'confirmed' : 'other'
-    if (status === 'other') continue   // inquiries and unconfirmed holds are not bookings
-    // The Botanica deal: the owner keeps cleaning, so a stay's revenue is accommodation + cleaning.
-    const total = Math.round((num(r.accom) + num(r.clean)) * 100) / 100
-    stays.push({ id: 'gy:' + s(r.id), origin: 'guesty', status, guest: r.guest_name || null, checkIn: ci, checkOut: co, nights: nightsOf(ci, co, r.nights), source: r.source || null, bookedAt: r.created_at || null, balance: r.balance != null ? num(r.balance) : null, total, parts: [{ room: listingRoom[s(r.listing_id)] || '', segment: 'botanica', total }] })
-  }
-  return { rooms, stays }
+  for (const r of gyRows) { const st = fromGy(r, listingRoom, inCb); if (st) stays.push(st) }
+  return { stays, partial: !!(cb as any).truncated || !!(gy as any).truncated }
 }
 
 /** A stay as one scope sees it: only its rooms in the scope, with their share of the money. null = not in scope. */
@@ -93,4 +159,26 @@ export function inScope(st: SegStay, scope: Scope): (SegStay & { rooms: string[]
   const parts = scope === 'all' ? st.parts : st.parts.filter(p => p.segment === scope)
   if (!parts.length) return null
   return { ...st, parts, total: parts.reduce((a, p) => a + p.total, 0), rooms: parts.map(p => p.room).filter(Boolean) }
+}
+
+
+/** The rooms and stays a scope + filter leaves. Room type and wing narrow the ROOMS too (so occupancy
+ *  divides by the rooms being looked at); channel, length of stay, booking window and system narrow
+ *  only the stays. `chan` is lib/garden/revenue channelName, passed in to keep this file free of it. */
+export function narrow(all: { rooms: SegRoom[]; stays: SegStay[] }, scope: Scope, f: StayFilter | null | undefined, chan: (src: string | null) => string): { rooms: SegRoom[]; stays: (SegStay & { rooms: string[] })[] } {
+  const types = f?.types?.length ? new Set(f.types) : null, wings = f?.wings?.length ? new Set(f.wings) : null, chans = f?.channels?.length ? new Set(f.channels) : null
+  const rooms = all.rooms.filter(r => (scope === 'all' || r.segment === scope) && (!types || types.has(r.type)) && (!wings || wings.has(r.wing)))
+  const roomOk = types || wings ? new Set(rooms.map(r => r.name)) : null
+  const stays: (SegStay & { rooms: string[] })[] = []
+  for (const st of all.stays) {
+    if (f?.origin && st.origin !== f.origin) continue
+    if (chans && !chans.has(chan(st.source))) continue
+    if (f?.losMin != null && st.nights < f.losMin) continue
+    if (f?.losMax != null && st.nights > f.losMax) continue
+    if (f?.leadMin != null || f?.leadMax != null) { const d = leadDays(st); if (d == null || (f.leadMin != null && d < f.leadMin) || (f.leadMax != null && d > f.leadMax)) continue }
+    const x = inScope(st, scope); if (!x) continue
+    if (roomOk) { const parts = x.parts.filter(p => roomOk.has(p.room)); if (!parts.length) continue; stays.push({ ...x, parts, total: parts.reduce((a, p) => a + p.total, 0), rooms: parts.map(p => p.room).filter(Boolean) }) }
+    else stays.push(x)
+  }
+  return { rooms, stays }
 }

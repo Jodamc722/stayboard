@@ -260,12 +260,14 @@ export async function backfillReservations(from: string, to: string): Promise<{ 
   const db = supabaseAdmin()
   const list = await getReservations({ from, to })
   const { cbGet } = await import('./cloudbeds')
-  const totals: Record<string, { total: number | null; balance: number | null }> = {}
+  const totals: Record<string, { total: number | null; balance: number | null; room: number | null; taxes: number | null }> = {}
   const num = (v: any) => { const x = Number(v); return v == null || v === '' || !Number.isFinite(x) ? null : x }
+  const { roomRevenueOf } = await import('./res-detail')
+  const net = await (await import('./segments')).hasRoomRevenue()
   for (let page = 1; page <= 30; page++) {
     const { data } = await cbGet<any[]>('getReservationsWithRateDetails', { reservationCheckOutFrom: from, reservationCheckOutTo: ymd(new Date(Date.parse(to) + 45 * 86400000)), pageNumber: page, pageSize: 100 })
     const rows = Array.isArray(data) ? data : []
-    for (const r of rows) if (r?.reservationID) totals[String(r.reservationID)] = { total: num(r.total), balance: num(r.balance) }
+    for (const r of rows) if (r?.reservationID) totals[String(r.reservationID)] = { total: num(r.total), balance: num(r.balance), ...roomRevenueOf(r) }
     if (rows.length < 100) break
   }
   const rows = list.map(r => ({
@@ -273,6 +275,7 @@ export async function backfillReservations(from: string, to: string): Promise<{ 
     nights: r.checkIn && r.checkOut ? Math.max(0, Math.round((Date.parse(r.checkOut) - Date.parse(r.checkIn)) / 86400000)) : null,
     adults: r.adults, children: r.children, room_ids: r.roomIds, room_names: r.roomNames, source: r.source,
     ...((totals[r.id]?.total ?? r.total) != null ? { total: totals[r.id]?.total ?? r.total } : {}), balance: totals[r.id]?.balance ?? r.balance,
+    ...(net && totals[r.id]?.room != null ? { room_revenue: totals[r.id]!.room, taxes_fees: totals[r.id]!.taxes } : {}),
     booked_at: r.bookedAt || null, modified_at: r.modifiedAt || null, raw: r.raw, synced_at: new Date().toISOString(),
   }))
   for (let i = 0; i < rows.length; i += 200) { const { error } = await db.from('garden_reservations').upsert(rows.slice(i, i + 200), { onConflict: 'id' }); if (error) throw new Error(error.message) }

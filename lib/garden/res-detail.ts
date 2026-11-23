@@ -26,25 +26,46 @@ export async function pool<T>(items: T[], size: number, fn: (x: T) => Promise<vo
 const TOTALS_AT = 'garden_totals_at'
 const n = (v: any) => { const x = Number(v); return Number.isFinite(x) ? x : null }
 
+/** Room revenue before taxes and fees, as Cloudbeds itemises it: balanceDetailed.subTotal, else the nightly rates added up. */
+export function roomRevenueOf(r: any): { room: number | null; taxes: number | null } {
+  const bd = r?.balanceDetailed || {}
+  let room = n(bd.subTotal)
+  if (room == null && Array.isArray(r?.rooms)) {
+    let sum = 0, any = false
+    for (const rm of r.rooms) { const dr = rm?.detailedRoomRates; if (dr && typeof dr === 'object') for (const v of Object.values(dr)) { const x = n(v); if (x != null) { sum += x; any = true } } }
+    if (any) room = Math.round(sum * 100) / 100
+  }
+  return { room, taxes: n(bd.taxesFees) }
+}
+
 /** Totals (and balances) for every reservation checking out in the window. */
 export async function pullTotals(daysBack = 120, daysAhead = 365, force = false): Promise<number | null> {
-  // Totals move slowly; every six hours is plenty, and it keeps the 20-minute sync inside its budget.
+  // Hourly (Jon, 2026-11-23: "make sure it syncs to Cloudbeds every hour or so") — it was every six, so a
+  // new booking could sit without its amount for hours. `force` is the Refresh button.
   const last = await getSettingFresh<string | null>(TOTALS_AT, null).catch(() => null)
-  if (!force && last && Date.now() - Date.parse(last) < 6 * 3600e3) return null
+  if (!force && last && Date.now() - Date.parse(last) < 55 * 60e3) return null
   const db = supabaseAdmin()
+  const { hasRoomRevenue } = await import('./segments')
+  const net = await hasRoomRevenue()
   const from = ymd(new Date(Date.now() - daysBack * 864e5)), to = ymd(new Date(Date.now() + daysAhead * 864e5))
-  const got: { id: string; total: number | null; balance: number | null }[] = []
+  const got: { id: string; total: number | null; balance: number | null; room: number | null; taxes: number | null }[] = []
   for (let page = 1; page <= 60; page++) {
     const { data } = await cbGet<any[]>('getReservationsWithRateDetails', { reservationCheckOutFrom: from, reservationCheckOutTo: to, pageNumber: page, pageSize: 100 })
     const rows = Array.isArray(data) ? data : []
-    for (const r of rows) if (r?.reservationID) got.push({ id: String(r.reservationID), total: n(r.total), balance: n(r.balance) })
+    for (const r of rows) if (r?.reservationID) got.push({ id: String(r.reservationID), total: n(r.total), balance: n(r.balance), ...roomRevenueOf(r) })
     if (rows.length < 100) break
   }
   // Only rows we hold, only when the total is known — one update per reservation that changed.
-  const { data: have } = await db.from('garden_reservations').select('id,total,balance').in('id', got.map(g => g.id).slice(0, 5000))
-  const cur: Record<string, any> = {}; for (const h of ((have || []) as any[])) cur[h.id] = h
-  const todo = got.filter(g => { const c = cur[g.id]; return c && g.total != null && !(Number(c.total) === g.total && (g.balance == null || Number(c.balance) === g.balance)) })
-  await pool(todo, 10, async g => { await db.from('garden_reservations').update({ total: g.total, ...(g.balance != null ? { balance: g.balance } : {}) }).eq('id', g.id) })
+  // Read in chunks: one read answers at most 1,000 rows, so a longer list was silently cut short.
+  const cur: Record<string, any> = {}
+  const ids = got.map(g => g.id)
+  for (let i = 0; i < ids.length; i += 300) {
+    const { data: have } = await db.from('garden_reservations').select(net ? 'id,total,balance,room_revenue' : 'id,total,balance').in('id', ids.slice(i, i + 300))
+    for (const h of ((have || []) as any[])) cur[h.id] = h
+  }
+  const same = (a: any, b: number | null) => b == null || (a != null && Number(a) === b)
+  const todo = got.filter(g => { const c = cur[g.id]; return c && g.total != null && !(Number(c.total) === g.total && same(c.balance, g.balance) && (!net || same(c.room_revenue, g.room))) })
+  await pool(todo, 10, async g => { await db.from('garden_reservations').update({ total: g.total, ...(g.balance != null ? { balance: g.balance } : {}), ...(net && g.room != null ? { room_revenue: g.room, taxes_fees: g.taxes } : {}) }).eq('id', g.id) })
   await setSetting(TOTALS_AT, new Date().toISOString(), 'garden-sync')
   return todo.length
 }
