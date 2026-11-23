@@ -50,7 +50,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true, ...out })
   }
   if (action === 'sync') {
-    const r = await syncGarden({ full: !!b?.full })
+    const r = await syncGarden({ full: !!b?.full, quick: !!b?.quick })
     return NextResponse.json(r)
   }
   return NextResponse.json({ error: 'unknown action' }, { status: 400 })
