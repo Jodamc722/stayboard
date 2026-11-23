@@ -62,7 +62,7 @@ export function GardenFrontDesk({ canEdit, canVerify, canTasks }: { canEdit: boo
 
   const syncNow = async () => {
     setBusy(true); setNote('')
-    const r = await post('/api/garden', { action: 'sync' }).catch(e => ({ errors: [String(e?.message || e)] }))
+    const r = await post('/api/garden', { action: 'sync', quick: true })   // bookings + room conditions only: seconds, not minutes.catch(e => ({ errors: [String(e?.message || e)] }))
     setNote(r?.connected === false ? 'Cloudbeds is not connected yet — see Setup.' : r?.errors?.length ? r.errors.join(' · ') : 'Synced from Cloudbeds.')
     setBusy(false); load()
   }

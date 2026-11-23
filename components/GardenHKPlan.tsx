@@ -121,6 +121,13 @@ export function GardenHKPlan({ canEdit, canSchedule = false }: { canEdit: boolea
     if (r?.ok) { setSel({}); setInsp('') }
     load(true)
   }
+  const syncNow = async () => {
+    setBusy('sync'); setMsg(null)
+    const r = await send('/api/garden', { action: 'sync', quick: true })
+    setBusy('')
+    setMsg(r?.connected === false ? { t: 'Cloudbeds is not connected.', warn: true } : r?.errors?.length ? { t: r.errors.join(' · '), warn: true } : { t: `Synced from Cloudbeds${r?.coreMs ? ' in ' + Math.max(1, Math.round(r.coreMs / 1000)) + 's' : ''}.` })
+    load(true)
+  }
   const autoAssign = async () => {
     if (!d) return
     const names = people.filter(p => p.onShift).map(p => p.name)
@@ -178,7 +185,7 @@ export function GardenHKPlan({ canEdit, canSchedule = false }: { canEdit: boolea
         <span className="text-sm font-semibold text-ink ml-1 inline-flex items-center gap-1.5">{loading ? <RefreshCw size={15} className="text-brand-600 animate-spin" /> : <CalendarRange size={15} className="text-brand-600" />} {dayLong(d.date)}{!live && !past ? <span className="text-[11px] font-medium text-muted">forecast</span> : null}</span>
         <div className="ml-auto inline-flex items-center gap-1.5">
           <span className="text-[11px] text-muted" title="When Cloudbeds was last read. It is read about every 30 minutes.">Data as of {ago(d.syncAt)}</span>
-          <button onClick={() => load()} className="inline-flex items-center gap-1 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-line bg-white text-ink hover:bg-app"><RefreshCw size={12} /> Reload</button>
+          <button onClick={syncNow} disabled={!!busy} title="Reads bookings and room conditions from Cloudbeds right now (a few seconds)" className="inline-flex items-center gap-1 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-line bg-white text-ink hover:bg-app disabled:opacity-50"><RefreshCw size={12} className={busy === 'sync' ? 'animate-spin' : ''} /> {busy === 'sync' ? 'Syncing…' : 'Sync now'}</button>
           <button onClick={() => window.print()} className="inline-flex items-center gap-1 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-line bg-white text-ink hover:bg-app"><Printer size={12} /> Print</button>
         </div>
       </div>
