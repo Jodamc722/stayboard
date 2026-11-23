@@ -13,7 +13,7 @@ export default async function OwnerAuditPage() {
   if (!user) redirect('/login')
   return (
     <Shell>
-      <div className="max-w-[1400px] mx-auto">
+      <div>
         <OwnerAuditBoard />
       </div>
     </Shell>

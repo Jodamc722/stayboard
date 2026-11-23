@@ -153,7 +153,7 @@ export function ScoreboardDesk() {
   const can = d?.can || { edit: false }
 
   return (
-    <div className="max-w-6xl mx-auto">
+    <div>
       <LeanHead title="Inspection scoreboard" sub="HK Post Clean Inspection 1.0 — the clean as found. A report to send every 5 inspections.">
         <Pill title="Housekeepers with an inspection in this period">{d?.board.length ?? 0} people</Pill>
         {ready.length ? <Pill tone="amber" title="Reports ready to send" onClick={() => setTab('reports')}>{ready.length} to send</Pill> : null}

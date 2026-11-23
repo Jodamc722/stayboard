@@ -265,7 +265,7 @@ export function ProjectionsLibrary() {
   )
 
   return (
-    <div className="max-w-[1400px] mx-auto">
+    <div>
       <input ref={fileRef} type="file" accept={ACCEPT} className="hidden" onChange={e => { const f = e.target.files?.[0]; e.target.value = ''; if (f) runRead('file', f) }} />
       <input ref={unitFile} type="file" accept={ACCEPT} className="hidden" onChange={e => { const f = e.target.files?.[0]; e.target.value = ''; const id = unitFor.current; const p = entry?.cma.plans.find(x => x.id === id); if (f && p) runRead('file', f, { id: p.id, name: p.name }) }} />
 

@@ -121,7 +121,7 @@ export function ScorecardsDesk() {
   const P = d ? d[period] : null
   const card = P ? P.teams[team] : null
   return (
-    <div className="max-w-6xl mx-auto">
+    <div>
       <LeanHead title="Scorecards" sub={P ? `${period === 'yesterday' ? 'Yesterday' : 'Last 7 days'}, ${P.label}. What each team completed, and who is leading on the team’s KPI.` : 'What each team completed, and who is leading on the team’s KPI.'}>
         <LeanPick<Period> value={period} title="Period" onPick={p => pick({ period: p })} options={[{ v: 'yesterday', label: 'Yesterday' }, { v: 'week', label: '7 days' }]} />
         <IconBtn title="Reload" onClick={() => load(true)}><RefreshCw size={14} /></IconBtn>

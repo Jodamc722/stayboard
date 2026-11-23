@@ -13,7 +13,7 @@ export default async function CleanInvoicesPage() {
   if (!user) redirect('/login')
   return (
     <Shell>
-      <div className="max-w-[1300px] mx-auto"><CleanInvoices /></div>
+      <div><CleanInvoices /></div>
     </Shell>
   )
 }

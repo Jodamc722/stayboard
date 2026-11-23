@@ -75,7 +75,7 @@ export function MyAccount() {
   )
   const ready = !!g?.connected && g.mail && g.calendar
   return (
-    <div className="max-w-[900px] mx-auto">
+    <div className="max-w-[900px]">
       <header className="pb-5 mb-6 border-b border-line">
         <p className="text-[11px] uppercase tracking-[0.24em] text-muted font-semibold">My account</p>
         <h1 className="font-serif text-[40px] leading-none text-ink mt-1">Your Google account and booking links</h1>

@@ -224,7 +224,7 @@ export function SalesReport() {
 
   if (!data) {
     return (
-      <div className="max-w-[1100px] mx-auto">
+      <div>
         <LeanHead title="Revenue" sub={loading ? 'Booked by the day the booking was made · against last year' : undefined} />
         {loading ? <Skeleton /> : <LeanEmpty>The sales report could not be built{error ? ` — ${error}` : ''}. Reload in a minute; if it keeps failing, check the Guesty sync on System health.</LeanEmpty>}
       </div>
@@ -279,7 +279,7 @@ export function SalesReport() {
   const chMax = d.channels.reduce((m, c) => Math.max(m, c.share), 0) || 1
 
   return (
-    <div className="max-w-[1100px] mx-auto">
+    <div>
       <LeanHead title="Revenue" sub={`Booked by the day the booking was made · against last year · as of ${asOfLabel}`}>
         <Pill tone="brand" onClick={() => setTab('channels')} title="Share of this month's booked value that came direct (booking engine, website, direct)">
           Direct {d.directShare != null ? pct0(d.directShare) : '—'}

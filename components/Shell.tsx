@@ -589,10 +589,14 @@ export function Shell({ children, full = false }: { children: React.ReactNode; f
         {/* until a person has connected their Google account (email and calendar): one line, on every page */}
         {!full && <ConnectNudge />}
         <main className="flex-1 overflow-auto overscroll-contain px-safe">
+          {/* THE PAGE FITS THE WINDOW (Jon, 2026-11-23: "make sure the pages fit the screen"). There was a
+              1600px cap here, centred, and narrower caps on a dozen pages inside it, so on a wide window a
+              page sat in from the sidebar with an empty band each side. A page now starts at the sidebar
+              and runs to the window's edge at any width. */}
           {/* lg:pb-20: the Inbox and Eve buttons float bottom-right on a desktop, and without room to
               scroll past them the last row's buttons sat under them (2026-11-23 audit). On a phone the
               two live in the bottom bar, so the page only needs its ordinary foot. */}
-          <div className={full ? 'h-full min-h-full' : 'max-w-[1600px] mx-auto px-3 pt-4 pb-10 sm:p-6 lg:px-8 lg:pt-6 lg:pb-20 animate-fade-in'}>
+          <div className={full ? 'h-full min-h-full' : 'px-3 pt-4 pb-10 sm:p-6 lg:px-8 lg:pt-6 lg:pb-20 animate-fade-in'}>
             {children}
           </div>
         </main>

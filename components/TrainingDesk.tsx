@@ -144,7 +144,7 @@ export function TrainingDesk() {
   const counts = { video: items.filter(i => i.kind === 'video').length, faq: items.filter(i => i.kind === 'faq').length, doc: items.filter(i => i.kind === 'doc').length }
 
   return (
-    <div className="max-w-6xl mx-auto">
+    <div>
       <LeanHead title="Training" sub={lang === 'es' ? 'Videos y preguntas frecuentes del equipo — cómo lo hacemos en Stay.' : 'How-to videos and FAQs for the team — how we do it at Stay.'}>
         <Pill title="Videos">{counts.video} {lang === 'es' ? 'videos' : 'videos'}</Pill>
         {counts.faq ? <Pill title="FAQs">{counts.faq} FAQ</Pill> : null}

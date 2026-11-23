@@ -13,7 +13,7 @@ export default async function MarketingPage() {
   if (!user) redirect('/login')
   return (
     <Shell>
-      <div className="max-w-[1400px] mx-auto">
+      <div>
         <MarketingBoard />
       </div>
     </Shell>

@@ -35,7 +35,7 @@ export function PropertiesMap() {
   if (err) return <p className="p-8 text-muted">{err}</p>
   const paneH = 'lg:h-[calc(100vh-190px)] lg:min-h-[460px]'
   return (
-    <div className="max-w-[1600px] mx-auto">
+    <div>
       <div className="flex flex-wrap items-end gap-x-6 gap-y-2 mb-4">
         <div className="mr-auto"><p className={lab}>Properties</p><h1 className="font-serif text-[34px] leading-none text-ink mt-1">Map</h1></div>
         {data ? <p className="text-[13px] text-muted"><b className="text-ink">{live.length}</b> {live.length === 1 ? 'property' : 'properties'} · <b className="text-ink">{data.units.length}</b> units{data.onboarding.length ? <> · <b style={{ color: '#8C6D3A' }}>{data.onboarding.length}</b> onboarding</> : null}{data.unplaced ? <> · {data.unplaced} with no map location in Guesty</> : null}</p> : null}

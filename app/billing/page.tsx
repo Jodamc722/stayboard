@@ -19,7 +19,7 @@ export default async function BillingPage({ searchParams }: { searchParams?: Rec
   const legacy = view === 'labor' || view === 'rates' || view === 'board'
   return (
     <Shell>
-      <div className="max-w-[1400px] mx-auto">
+      <div>
         {legacy ? <BillingBoard /> : <BillingReview />}
       </div>
     </Shell>

@@ -14,7 +14,7 @@ export default async function ApiKeysPage() {
   const base = (process.env.NEXT_PUBLIC_APP_URL || 'https://lighthouse-stay.vercel.app').replace(/\/+$/, '')
   return (
     <Shell>
-      <div className="max-w-[900px] mx-auto">
+      <div className="max-w-[900px]">
         <ApiKeysPanel email={String(user.email || '')} base={base} endpoints={V1_ENDPOINTS} />
       </div>
     </Shell>

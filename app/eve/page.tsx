@@ -23,7 +23,7 @@ export default async function EvePage() {
   const loopsLevel = String(access.levels?.loops || 'off')
   return (
     <Shell>
-      <div className="max-w-[1100px] mx-auto">
+      <div>
         <EveHub canEdit={eveLevel === 'edit' || eveLevel === 'full'} loopsLevel={loopsLevel} isAdmin={access.role === 'admin'} />
       </div>
     </Shell>

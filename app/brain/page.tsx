@@ -17,7 +17,7 @@ export default async function BrainPage() {
   if (!access.allowed || (access.role !== 'admin' && !isSuperadmin(access.email))) redirect('/no-access')
   return (
     <Shell>
-      <div className="max-w-[1100px] mx-auto">
+      <div>
         <BrainView />
       </div>
     </Shell>
