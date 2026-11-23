@@ -220,6 +220,10 @@ export const AUTOMATIONS: AutomationDef[] = [
     what: 'Every 15 minutes: reads new posts in #vr-hkdamagereports, groups each line of text with its photos, works out the unit, what was found and the guest who just checked out, and puts it in the HK damage reports queue on the Claims board (Autofill claim / Not claimable) with a bell to whoever runs claims. Plain maintenance with no photos is filed straight to Handled.', receipt: 'automation_runs',
     notes: 'lib/hk-damage.ts. Photos need the Slack files:read permission.' },
   // ---- Ops ------------------------------------------------------------------------------------
+  { key: 'mail-review', label: 'Email review', area: 'ops', path: '/api/cron/mail-review',
+    what: 'Every 10 minutes: reads mail forwarded, copied or bcc\'d to jon+review@stay-hospitality.com with its attachments, and answers Jon only, in the same conversation: what the email is, what each document is, and the steps needed. Nobody else on the email is answered.',
+    configKey: 'mail_review', enabledPath: 'on', defaultOn: false, receipt: 'automation_runs',
+    notes: 'lib/mail-review.ts. Off until switched on from My account. At most 25 emails a day.' },
   { key: 'invoice-mail', label: 'Cleaning invoices by email', area: 'ops', path: '/api/cron/invoice-mail',
     what: 'Every 10 minutes: reads mail sent or copied to jon+invoices@stay-hospitality.com, audits each attached invoice against the cleans on record, and answers in the same conversation. Someone at Stay gets the full audit back; an outside sender gets a short "received, under review" note and the audit goes to Jon.',
     configKey: 'clean_invoice_mail', enabledPath: 'on', defaultOn: false, receipt: 'automation_runs',

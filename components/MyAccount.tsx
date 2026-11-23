@@ -6,6 +6,7 @@
 //   ConnectNudge    in the Shell, on every page: one quiet line until the person has connected, or says not now.
 import { useEffect, useState } from 'react'
 import { Check, Copy, ExternalLink, Plus, Trash2, Mail, CalendarDays, Loader2 } from 'lucide-react'
+import { MailReview } from '@/components/MailReview'
 
 type Any = any
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
@@ -145,6 +146,9 @@ export function MyAccount() {
           <ul className="mt-1 divide-y divide-line">{log.map((l, i) => <li key={i} className="flex flex-wrap items-baseline gap-x-2 py-1.5"><b>{l.name}</b><span>{new Date(l.day + 'T' + l.time).toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</span><span className="text-muted">{[(types || []).find(t => t.slug === l.slug)?.title || l.slug, l.email].join(' · ')}</span>{l.eventUrl ? <a href={l.eventUrl} target="_blank" rel="noreferrer" className="underline">calendar</a> : null}</li>)}</ul>
         </div> : null}
       </section>
+
+      {/* Admins only (the component draws nothing for anyone else): the address that reviews a forwarded email. */}
+      <MailReview />
     </div>
   )
 }

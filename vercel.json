@@ -165,6 +165,10 @@
       "schedule": "4,14,24,34,44,54 * * * *"
     },
     {
+      "path": "/api/cron/mail-review",
+      "schedule": "8,18,28,38,48,58 * * * *"
+    },
+    {
       "path": "/api/cron/lost-found",
       "schedule": "7,22,37,52 * * * *"
     },
