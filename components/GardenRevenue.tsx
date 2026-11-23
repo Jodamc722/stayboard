@@ -112,14 +112,17 @@ export function GardenRevenue({ api = '/api/garden/revenue', shared = false, can
   const [refreshing, setRefreshing] = useState('')
   const [share, setShare] = useState<any | null>(null)
   const [copied, setCopied] = useState('')
-  const fq = useMemo(() => filterQuery(filter), [filter])
+  // REVENUE = RENT + FEE INCOME, or rent alone (the revenue team, 2026-11-23). Travels with the filters.
+  const [rentOnly, setRentOnlyState] = useState(false)
+  const setRentOnly = (v: boolean) => { setRentOnlyState(v); try { const u = new URL(location.href); if (v) u.searchParams.set('rev', 'rent'); else u.searchParams.delete('rev'); history.replaceState(null, '', u.toString()) } catch {} }
+  const fq = useMemo(() => filterQuery(filter) + (rentOnly ? '&rev=rent' : ''), [filter, rentOnly])
   const filterN = filter.ch.length + filter.rt.length + filter.wing.length + (filter.los ? 1 : 0) + (filter.lead ? 1 : 0) + (filter.origin ? 1 : 0)
   const setFilter = (f: Filter) => { setFilterState(f); try { const u = new URL(location.href); for (const k of ['ch', 'rt', 'wing', 'los', 'lead', 'origin']) u.searchParams.delete(k); new URLSearchParams(filterQuery(f).slice(1)).forEach((v, k) => u.searchParams.set(k, v)); history.replaceState(null, '', u.toString()) } catch {} }
   const [scope, setScopeState] = useState<Scope>('all')
   const setScope = (v: Scope) => { setScopeState(v); try { const u = new URL(location.href); if (v === 'all') u.searchParams.delete('scope'); else u.searchParams.set('scope', v); history.replaceState(null, '', u.toString()) } catch {} }
 
   // The period lives in the URL, so a link or a reload opens the same one.
-  useEffect(() => { try { const sp = new URLSearchParams(location.search); const sc = sp.get('scope'); if (sc === 'garden' || sc === 'botanica') setScopeState(sc); const vw = sp.get('view'); if (vw && ['views', 'depth', 'channels', 'bookings', 'ahead', 'types'].includes(vw)) setTab(vw as Tab); const L = (k: string) => (sp.get(k) || '').split('|').filter(Boolean); const R = (k: string, o: [string, string][]) => o.some(x => x[0] === sp.get(k)) ? sp.get(k)! : ''; setFilterState({ ch: L('ch'), rt: L('rt'), wing: L('wing'), los: R('los', LOS_OPTS), lead: R('lead', LEAD_OPTS), origin: R('origin', ORIGIN_OPTS) }); const f = sp.get('from'), t = sp.get('to'); if (f && t && /^\d{4}-\d{2}-\d{2}$/.test(f) && /^\d{4}-\d{2}-\d{2}$/.test(t) && t >= f) { setRange([f, t]); setPreset(PRESETS.find(p => { const r = p.range(todayNY()); return r[0] === f && r[1] === t })?.key || 'custom') } } catch {} }, [])
+  useEffect(() => { try { const sp = new URLSearchParams(location.search); const sc = sp.get('scope'); if (sc === 'garden' || sc === 'botanica') setScopeState(sc); if (sp.get('rev') === 'rent') setRentOnlyState(true); const vw = sp.get('view'); if (vw && ['views', 'depth', 'channels', 'bookings', 'ahead', 'types'].includes(vw)) setTab(vw as Tab); const L = (k: string) => (sp.get(k) || '').split('|').filter(Boolean); const R = (k: string, o: [string, string][]) => o.some(x => x[0] === sp.get(k)) ? sp.get(k)! : ''; setFilterState({ ch: L('ch'), rt: L('rt'), wing: L('wing'), los: R('los', LOS_OPTS), lead: R('lead', LEAD_OPTS), origin: R('origin', ORIGIN_OPTS) }); const f = sp.get('from'), t = sp.get('to'); if (f && t && /^\d{4}-\d{2}-\d{2}$/.test(f) && /^\d{4}-\d{2}-\d{2}$/.test(t) && t >= f) { setRange([f, t]); setPreset(PRESETS.find(p => { const r = p.range(todayNY()); return r[0] === f && r[1] === t })?.key || 'custom') } } catch {} }, [])
   const go = (r: [string, string], key: string) => { setRange(r); setPreset(key); try { const u = new URL(location.href); u.searchParams.set('from', r[0]); u.searchParams.set('to', r[1]); history.replaceState(null, '', u.toString()) } catch {} }
   const load = useCallback(async () => {
     setLoading(true)
@@ -199,6 +202,9 @@ export function GardenRevenue({ api = '/api/garden/revenue', shared = false, can
         <div className="inline-flex rounded-lg border border-line overflow-hidden text-[12.5px]" title="Botanica = the rooms sold as Botanica through Guesty (matched by room number). Garden = every other room.">
           {([['all', 'Whole property'], ['garden', 'Garden'], ['botanica', 'Botanica']] as [Scope, string][]).map(([k, l]) => <button key={k} onClick={() => setScope(k)} className={'px-3 py-1.5 font-semibold border-l border-line first:border-l-0 ' + (scope === k ? 'bg-brand-600 text-white' : 'bg-white text-muted hover:text-ink')}>{l}{d?.segments ? <span className="ml-1 font-normal opacity-80">{d.segments[k]}</span> : null}</button>)}
         </div>
+        <div className="inline-flex rounded-lg border border-line overflow-hidden text-[12.5px]" title="Fee income: cleaning, parking and the other guest fees in Guesty; add-on items in Cloudbeds. Taxes are never included.">
+          {([[false, 'Rent + fees'], [true, 'Rent only']] as [boolean, string][]).map(([k, l]) => <button key={l} onClick={() => setRentOnly(k)} className={'px-3 py-1.5 font-semibold border-l border-line first:border-l-0 ' + (rentOnly === k ? 'bg-ink text-white' : 'bg-white text-muted hover:text-ink')}>{l}</button>)}
+        </div>
         <div className="inline-flex items-center gap-1">
           <button onClick={() => shift(-1)} aria-label="Earlier period" className="p-1.5 rounded-lg border border-line bg-white text-muted hover:text-ink"><ChevronLeft size={15} /></button>
           <button onClick={() => shift(1)} aria-label="Later period" className="p-1.5 rounded-lg border border-line bg-white text-muted hover:text-ink"><ChevronRight size={15} /></button>
@@ -275,15 +281,15 @@ export function GardenRevenue({ api = '/api/garden/revenue', shared = false, can
 
       {/* The period in six numbers, each against the one before it. */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
-        <Kpi label={future ? 'Revenue on the books' : 'Room revenue'} value={money(b.revenue)} sub={prevCovered ? prevLabel : undefined}>{prevCovered ? <Delta cur={b.revenue} prev={p.revenue} unit="pct" /> : <span className="text-muted">earlier period not loaded</span>}</Kpi>
+        <Kpi label={(future ? 'On the books' : 'Revenue') + (rentOnly ? ' · rent only' : ' · rent + fees')} value={money(b.revenue)} sub={`rent ${money(b.rent)} · fees ${money(b.fees)}${b.feePct != null ? ` (+${b.feePct}% on rent)` : ''}${prevCovered ? ' · ' + prevLabel : ''}`}>{prevCovered ? <Delta cur={b.revenue} prev={p.revenue} unit="pct" /> : <span className="text-muted">earlier period not loaded</span>}</Kpi>
         <Kpi label="Occupancy" value={pct(b.occupancy)} sub={`${b.nights.toLocaleString()} of ${(d.rooms * span).toLocaleString()} room nights`}>{prevCovered ? <Delta cur={b.occupancy} prev={p.occupancy} unit="pts" /> : null}</Kpi>
-        <Kpi label="ADR" value={money(b.adr)} sub="average rate per night sold">{prevCovered ? <Delta cur={b.adr} prev={p.adr} unit="pct" /> : null}</Kpi>
-        <Kpi label="RevPAR" value={money(b.revpar)} sub={`revenue per room, ${d.rooms} rooms`}>{prevCovered ? <Delta cur={b.revpar} prev={p.revpar} unit="pct" /> : null}</Kpi>
+        <Kpi label={rentOnly ? 'ADR · rent only' : 'ADR · with fees'} value={money(b.adr)} sub={`rent only ${money(b.adrRent)} · with fees ${money(b.adrAll)}`}>{prevCovered ? <Delta cur={b.adr} prev={p.adr} unit="pct" /> : null}</Kpi>
+        <Kpi label={rentOnly ? 'RevPAR · rent only' : 'RevPAR · with fees'} value={money(b.revpar)} sub={`revenue per room, ${d.rooms} rooms`}>{prevCovered ? <Delta cur={b.revpar} prev={p.revpar} unit="pct" /> : null}</Kpi>
         <Kpi label="Stays" value={b.bookings.toLocaleString()} sub={`${b.cancelled} cancelled or no-show`}>{prevCovered ? <Delta cur={b.bookings} prev={p.bookings} unit="pct" /> : null}</Kpi>
         <Kpi label={future ? 'Booked so far' : 'Booked in this period'} value={past || !future ? String(d.booked.bookings) : '—'} sub={past || !future ? `${money(d.booked.revenue)} · for any stay date` : 'the period has not started'}>{d.booked.cancelled ? <span className="text-muted">{d.booked.cancelled} of them since cancelled</span> : <span className="text-muted">new reservations made</span>}</Kpi>
       </div>
       <p className="text-[11.5px] text-muted mt-1.5">{scope === 'all' ? 'Whole property' : scope === 'garden' ? 'Garden rooms only' : 'Botanica rooms only'}: {d.rooms} rooms{d.segments?.blocked ? `, ${d.segments.blocked} of them blocked in Cloudbeds` : ''}.{d.guesty?.bookings ? ` Includes ${d.guesty.bookings} Botanica booking${d.guesty.bookings === 1 ? '' : 's'} from Guesty (${money(d.guesty.revenue)}).` : ''}{filterN ? ` ${filterN} filter${filterN === 1 ? '' : 's'} on: every number below counts only what matches.` : ''}</p>
-      {d.basis ? <p className="text-[11.5px] text-muted mt-0.5">{d.basis.gross ? (d.basis.room ? `Revenue: ${d.basis.room.toLocaleString()} stays at room revenue before taxes and fees; ${d.basis.gross.toLocaleString()} Cloudbeds stays still at the reservation total (taxes and fees in it) until their breakdown is read.` : 'Revenue is the Cloudbeds reservation total for each stay, which has taxes and fees in it; Botanica stays in Guesty are accommodation plus cleaning.') : 'Revenue is room revenue before taxes and fees.'}</p> : null}
+      <p className="text-[11.5px] text-muted mt-0.5">Rent is the room charge before taxes (Cloudbeds) or the accommodation fare (Guesty). Fee income is cleaning, parking and other guest fees in Guesty, and add-on items in Cloudbeds. Taxes are in neither.{d.basis?.gross ? ` ${d.basis.gross.toLocaleString()} Cloudbeds stay${d.basis.gross === 1 ? ' has' : 's have'} no breakdown from Cloudbeds yet and count${d.basis.gross === 1 ? 's' : ''} at the reservation total.` : ''}</p>
       {d.today && range[0] <= t0 && range[1] >= t0 ? <p className="text-[12px] text-ink mt-2"><span className="text-[10.5px] font-semibold uppercase tracking-wider text-muted mr-2">Today, live from Cloudbeds</span>{pct(d.today.occupancy)} occupied · {d.today.arrivals} arrivals · {d.today.departures} departures · {d.today.inHouse} in house · {d.today.bookings} booked today</p> : null}
 
       {/* The three sides next to each other, before anything else. */}
@@ -292,7 +298,7 @@ export function GardenRevenue({ api = '/api/garden/revenue', shared = false, can
       {/* One chart. */}
       <div className="rounded-xl border border-line bg-white p-3.5">
         <div className="flex items-center gap-2 flex-wrap mb-3">
-          <span className="text-[13px] font-semibold text-ink">{metric === 'revenue' ? 'Room revenue' : metric === 'occupancy' ? 'Occupancy' : 'ADR'} by {grain}</span>
+          <span className="text-[13px] font-semibold text-ink">{metric === 'revenue' ? (rentOnly ? 'Rent' : 'Revenue (rent + fees)') : metric === 'occupancy' ? 'Occupancy' : 'ADR'} by {grain}</span>
           <span className="text-[11.5px] text-muted">{series.some(x => x.future) ? 'lighter bars are still to come (on the books today)' : ''}</span>
           <div className="ml-auto inline-flex rounded-lg border border-line overflow-hidden text-[12px]">
             {(['revenue', 'occupancy', 'adr'] as Metric[]).map(m => <button key={m} onClick={() => setMetric(m)} className={'px-3 py-1 font-semibold border-l border-line first:border-l-0 ' + (metric === m ? 'bg-ink text-white' : 'bg-white text-muted hover:text-ink')}>{m === 'revenue' ? 'Revenue' : m === 'occupancy' ? 'Occupancy' : 'ADR'}</button>)}
