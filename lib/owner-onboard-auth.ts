@@ -122,9 +122,12 @@ export async function emailMagicLink(r: OORecord, origin: string, kind: 'invite'
   // several people receive cannot carry a one-time sign-in button: whoever clicked it first would be signed in AS THE
   // OWNER and would use the link up. So the shared email's button opens the portal's sign-in page, and the owner's
   // private one-time link goes in a second email, sent to the owner alone.
-  const shared = kind === 'invite' || kind === 'order'
+  // ONE OWNER-PORTAL EMAIL, TO THE OWNER ALONE (Jon, 2026-11-23: "Only need one email to send to them, no cc, get rid
+  // of the other one"): the invite is no longer copied to the team, so it carries the owner's own one-time sign-in
+  // button and there is no second private email. Order-list emails still copy the team.
+  const shared = kind === 'order'
   const cc = shared ? (await readOOSettings().catch(() => null))?.teamCc.filter(e => e !== to.toLowerCase()) || [] : []
-  const needsPrivate = shared && (kind === 'invite' || !who.auth?.pass)
+  const needsPrivate = shared && !who.auth?.pass
   const token = shared ? '' : newToken(r, kind === 'signin' ? 30 : 60 * 24 * 7, id)
   const link = origin.replace(/\/$/, '') + '/join/' + r.code + (token ? '?k=' + token : '')
   const first = (who.name || '').split(' ')[0] || 'there'
@@ -151,7 +154,7 @@ export async function emailMagicLink(r: OORecord, origin: string, kind: 'invite'
     list: ['Tell us about the home', 'Confirm what is already in it, so we only order what is missing', 'Send your W-9 and payout details securely'],
     lead: ['After that, the portal shows each step, from photography and your listing to your onboarding call and going live.'],
     cta: 'Set up my owner portal', after: [`If you have a question, reply to this email${gm.phone ? ' or call ' + escHtml(gmFirst) + ' at ' + escHtml(gm.phone) : ''}.`],
-    note: 'Your tax ID and bank details are encrypted the moment you send them, and we will never ask for them by email.',
+    note: 'Your tax ID and bank details are encrypted the moment you send them. Please do not forward this email: the button signs in whoever clicks it.',
   } : {
     eyebrow: 'Owner portal', heading: 'Sign in to your owner portal',
     pre: 'Your one-time sign-in link. It works for the next 30 minutes.',
@@ -192,7 +195,7 @@ function remindCopy(m: { kind: RemindKind; n: 1 | 2 | 3 }, c: { first: string; a
   const by: Record<RemindKind, { heading: string; pre: string; paragraphs: string[]; list?: string[]; cta: string; note: string }> = {
     start: { heading: m.n === 1 ? 'Your owner portal is ready when you are' : 'Your owner portal is still waiting', pre: 'It takes about ten minutes and it is the first step to getting your home live.',
       paragraphs: [hi, `A quick reminder that your owner portal${c.at} is ready. Setting it up takes about ten minutes, and it is the first step to getting your home live and earning.`], list: ['Create your password', 'Tell us about the home', 'Send your W-9 and payout details securely'], cta: 'Set up my owner portal',
-      note: 'Your tax ID and bank details are encrypted the moment you send them, and we will never ask for them by email.' },
+      note: 'Your tax ID and bank details are encrypted the moment you send them.' },
     home: { heading: 'Pick up where you left off', pre: 'A few details about the home and we can get moving.',
       paragraphs: [hi, `Thank you for setting up your portal. The next step is to tell us about your home${c.at}: its size, beds, kitchen and Wi-Fi. It takes a few minutes, and everything after it depends on it.`], cta: 'Tell us about my home',
       note: 'It saves as you go, so you can stop and come back any time.' },
@@ -201,7 +204,7 @@ function remindCopy(m: { kind: RemindKind; n: 1 | 2 | 3 }, c: { first: string; a
       note: 'Nothing is ordered without your approval.' },
     paperwork: { heading: 'We still need your W-9 and payout details', pre: 'So we can pay you. It takes about three minutes.',
       paragraphs: [hi, `We are nearly there. To set up your payouts for your home${c.at} we still need two things from you, and they take about three minutes:`], list: ['Your W-9 details', 'The bank account you want your payouts sent to'], cta: 'Finish my paperwork',
-      note: 'Your tax ID and bank details are encrypted the moment you send them, and only the last four digits are ever shown again. We will never ask for them by email.' },
+      note: 'Your tax ID and bank details are encrypted the moment you send them, and only the last four digits are ever shown again.' },
     order: { heading: 'Your order list is waiting for your approval', pre: 'We place the order as soon as you approve it.',
       paragraphs: [hi, `Your order list${c.at} is ready, and we are holding the order until you have looked at it. Please review it, mark anything you already own, and approve it or tell us what to change.`], cta: 'Review and approve',
       note: 'Getting the home stocked is usually what decides the go-live date, so an early answer helps.' },

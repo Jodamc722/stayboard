@@ -141,7 +141,7 @@ function InviteOwner({ rec, onRec }: { rec: Any; onRec: (r: Any) => void }) {
   return (
     <section className={card}>
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 mb-1"><h2 className="font-serif text-[22px] leading-none text-ink mr-auto">{rows.length > 1 ? 'The owners’ portal accounts' : 'The owner’s portal account'} <Lock size={14} className="inline" /></h2></div>
-      <p className="text-[12.5px] text-muted mb-3">Each owner gets their own invite, with the team copied, and a second email to them alone with their private sign-in link: they click it, create their own password, and from then on sign in with their email and password, from the link or at <b className="text-ink">{host}/portal</b>. An owner account opens only this onboarding, never the rest of Lighthouse.</p>
+      <p className="text-[12.5px] text-muted mb-3">Each owner gets one owner-portal email, sent to them alone with their private sign-in link: they click it, create their own password, and from then on sign in with their email and password, from the link or at <b className="text-ink">{host}/portal</b>. An owner account opens only this onboarding, never the rest of Lighthouse.</p>
       <ul className="divide-y divide-line border-y border-line">
         {rows.map((o, i) => { const a = o.access || {}; return (
           <li key={o.id} className="py-2.5 flex flex-wrap items-center gap-x-3 gap-y-1.5">
