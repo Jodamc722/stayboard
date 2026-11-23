@@ -122,9 +122,12 @@ export async function emailMagicLink(r: OORecord, origin: string, kind: 'invite'
   // several people receive cannot carry a one-time sign-in button: whoever clicked it first would be signed in AS THE
   // OWNER and would use the link up. So the shared email's button opens the portal's sign-in page, and the owner's
   // private one-time link goes in a second email, sent to the owner alone.
-  const shared = kind === 'invite' || kind === 'order'
+  // ONE OWNER-PORTAL EMAIL, TO THE OWNER ALONE (Jon, 2026-11-23: "Only need one email to send to them, no cc, get rid
+  // of the other one"): the invite is no longer copied to the team, so it carries the owner's own one-time sign-in
+  // button and there is no second private email. Order-list emails still copy the team.
+  const shared = kind === 'order'
   const cc = shared ? (await readOOSettings().catch(() => null))?.teamCc.filter(e => e !== to.toLowerCase()) || [] : []
-  const needsPrivate = shared && (kind === 'invite' || !who.auth?.pass)
+  const needsPrivate = shared && !who.auth?.pass
   const token = shared ? '' : newToken(r, kind === 'signin' ? 30 : 60 * 24 * 7, id)
   const link = origin.replace(/\/$/, '') + '/join/' + r.code + (token ? '?k=' + token : '')
   const first = (who.name || '').split(' ')[0] || 'there'
@@ -151,7 +154,7 @@ export async function emailMagicLink(r: OORecord, origin: string, kind: 'invite'
     list: ['Tell us about the home', 'Confirm what is already in it, so we only order what is missing', 'Send your W-9 and payout details securely'],
     lead: ['After that, the portal shows each step, from photography and your listing to your onboarding call and going live.'],
     cta: 'Set up my owner portal', after: [`If you have a question, reply to this email${gm.phone ? ' or call ' + escHtml(gmFirst) + ' at ' + escHtml(gm.phone) : ''}.`],
-    note: 'Your tax ID and bank details are encrypted the moment you send them.',
+    note: 'Your tax ID and bank details are encrypted the moment you send them. Please do not forward this email: the button signs in whoever clicks it.',
   } : {
     eyebrow: 'Owner portal', heading: 'Sign in to your owner portal',
     pre: 'Your one-time sign-in link. It works for the next 30 minutes.',

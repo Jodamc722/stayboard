@@ -67,7 +67,7 @@ export const DEFAULT_SALES: OOPerson = { name: 'Nick Carline', role: 'Business D
  * and what happens after, including that the link to book the hour-long onboarding call arrives on its own once the
  * photos and the listing are done. The owner's private sign-in still goes in its own email, to them alone.
  */
-export function introEmail(r: Pick<OORecord, 'custom' | 'attach'>, link: string, callLink = ''): { subject: string; body: string } {
+export function introEmail(r: Pick<OORecord, 'custom' | 'attach'>, _link: string, callLink = ''): { subject: string; body: string } {
   const c = r.custom, gm = gmOf(c.gm), sa = c.sales
   const first = (c.ownerName || '').trim().split(/\s+/)[0] || 'there'
   const home = [r.attach.property, r.attach.unitLabel ? 'unit ' + r.attach.unitLabel : ''].filter(Boolean).join(', ')
@@ -76,17 +76,19 @@ export function introEmail(r: Pick<OORecord, 'custom' | 'attach'>, link: string,
   const sig = (p: OOPerson) => [p.name, [p.role, 'Stay Hospitality'].filter(Boolean).join(', '), p.phone, p.email].filter(Boolean).join('\n')
   const welcome = `Welcome to Stay Hospitality, and thank you for trusting us with ${home ? 'your home at ' + home : 'your home'}.`
   const steps = `1. Tell us about the home\n2. Confirm what's already there, so we only order what's missing\n3. Send your W-9 and payout details securely`
-  const signIn = `You'll also get a separate email, sent only to you, with a secure sign-in link. Use it the first time to create your password.`
+  // NO PORTAL LINK IN THE WELCOME (Jon, 2026-11-23: "get rid of the owner portal link in welcome email"): the way in
+  // is the one owner-portal email that follows, sent to the owner alone (lib/owner-onboard-auth, kind 'invite').
+  const signIn = `Your owner portal link comes in a separate email, sent only to you. Use it the first time to create your password.`
   const note = 'Your tax ID and bank details are encrypted the moment you send them.'
   const after = (who: string) => `Then ${who}: photography and your listing. When both are ready, you'll get a link to book your onboarding call with ${c.from === 'gm' ? 'me' : gmFirst}, about an hour, where we walk through the listing and the pricing strategy before your home goes live. The portal shows every step, so you always know where things stand.`
   if (c.from === 'gm') {
-    const call = callLink ? `Two things to do now.\n\nFirst, a quick hello. Pick a time for a 15-minute introductory call with me:\n${callLink}\n\nSecond, your owner portal. It takes about ten minutes and saves as you go:\n${steps}\n\nYour owner portal:\n${link}` : `Your first step is the owner portal. It takes about ten minutes and saves as you go:\n${steps}\n\nYour owner portal:\n${link}`
+    const call = callLink ? `Two things to do now.\n\nFirst, a quick hello. Pick a time for a 15-minute introductory call with me:\n${callLink}\n\nSecond, your owner portal. It takes about ten minutes and saves as you go:\n${steps}` : `Your first step is the owner portal. It takes about ten minutes and saves as you go:\n${steps}`
     return {
       subject: 'Welcome to Stay Hospitality: your first steps',
       body: `Hi ${first},\n\n${welcome}\n\nI'm ${gm.name}, ${gmRole}. My team and I will take your home from signed agreement to its first guest, and I'm your point of contact the whole way. The people copied on this email are working on your home with me, so a reply-all reaches all of us.\n\n${call}\n\n${signIn}\n\n${after('we get to work')}\n\nIf you have a question at any point, reply here${gm.phone ? ' or call me at ' + gm.phone : ''}. I look forward to working with you.\n\n${note}\n\nBest regards,\n${sig(gm)}`,
     }
   }
-  const call = callLink ? `Two things to do now.\n\nFirst, a quick hello with ${gmFirst}. Pick a time for a 15-minute introductory call:\n${callLink}\n\nSecond, your owner portal. It takes about ten minutes and saves as you go:\n${steps}\n\nYour owner portal:\n${link}` : `Your first step is the owner portal. It takes about ten minutes and saves as you go:\n${steps}\n\nYour owner portal:\n${link}`
+  const call = callLink ? `Two things to do now.\n\nFirst, a quick hello with ${gmFirst}. Pick a time for a 15-minute introductory call:\n${callLink}\n\nSecond, your owner portal. It takes about ten minutes and saves as you go:\n${steps}` : `Your first step is the owner portal. It takes about ten minutes and saves as you go:\n${steps}`
   return {
     subject: 'Welcome to Stay Hospitality: your first steps',
     body: `Hi ${first},\n\n${welcome} I've enjoyed getting to know you, and I'm glad we're doing this together.\n\nFrom here, I'd like to introduce ${gm.name}, our ${gmRole}, copied on this email. ${gmFirst} and the team will take your home from signed agreement to its first guest. I'm still here whenever you need me.\n\n${call}\n\n${signIn}\n\n${after('the team gets to work')}\n\nIf you have a question at any point, reply here and it reaches all of us${sa.phone ? ', or call me at ' + sa.phone : ''}.\n\n${note}\n\nBest regards,\n${sig(sa)}`,
