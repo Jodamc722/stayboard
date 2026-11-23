@@ -77,7 +77,7 @@ export function introEmail(r: Pick<OORecord, 'custom' | 'attach'>, link: string,
   const welcome = `Welcome to Stay Hospitality, and thank you for trusting us with ${home ? 'your home at ' + home : 'your home'}.`
   const steps = `1. Tell us about the home\n2. Confirm what's already there, so we only order what's missing\n3. Send your W-9 and payout details securely`
   const signIn = `You'll also get a separate email, sent only to you, with a secure sign-in link. Use it the first time to create your password.`
-  const note = 'Your tax ID and bank details are encrypted the moment you send them. We will never ask for them by email.'
+  const note = 'Your tax ID and bank details are encrypted the moment you send them.'
   const after = (who: string) => `Then ${who}: photography and your listing. When both are ready, you'll get a link to book your onboarding call with ${c.from === 'gm' ? 'me' : gmFirst}, about an hour, where we walk through the listing and the pricing strategy before your home goes live. The portal shows every step, so you always know where things stand.`
   if (c.from === 'gm') {
     const call = callLink ? `Two things to do now.\n\nFirst, a quick hello. Pick a time for a 15-minute introductory call with me:\n${callLink}\n\nSecond, your owner portal. It takes about ten minutes and saves as you go:\n${steps}\n\nYour owner portal:\n${link}` : `Your first step is the owner portal. It takes about ten minutes and saves as you go:\n${steps}\n\nYour owner portal:\n${link}`
