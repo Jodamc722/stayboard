@@ -23,16 +23,19 @@ function summary(all: { rooms: SegRoom[]; stays: SegStay[] }, scope: Scope, from
   const N = narrow(all, scope, f, channelName)
   const lo = ms(from), hi = ms(to) + DAY, days = Math.round((hi - lo) / DAY)
   const R = N.rooms
-  const a = agg(); let cancelled = 0, lost = 0, owed = 0, owedN = 0, arrivals = 0, rent = 0, fees = 0, other = 0
+  const a = agg(); let cancelled = 0, lost = 0, owed = 0, owedN = 0, arrivals = 0, rent = 0, fees = 0, other = 0, losSum = 0, one = 0, week = 0
   for (const x of N.stays) {
     if (!isLive(x)) { if (x.checkIn <= to && x.checkOut > from) { cancelled++; lost += x.total } continue }
     const n = Math.max(0, Math.round((Math.min(hi, ms(x.checkOut)) - Math.max(lo, ms(x.checkIn))) / DAY))
     if (n <= 0) continue
+    // Length of stay is the WHOLE stay's nights, not the part inside the period (a 10-night stay that
+    // overlaps the period by 2 nights is still a 10-night stay).
+    losSum += x.nights; if (x.nights === 1) one++; if (x.nights >= 7) week++
     a.stays++; a.nights += n * x.parts.length; a.revenue += (x.total / x.nights) * n; rent += (x.rent / x.nights) * n; fees += (x.fees / x.nights) * n; other += (x.other / x.nights) * n
     if (x.checkIn >= from && x.checkIn <= to) arrivals++
     if ((x.balance || 0) > 0) { owed += x.balance || 0; owedN++ }
   }
-  return { scope, label: SEGMENT_LABEL[scope], rooms: R.length, blocked: R.filter(r => r.blocked).length, days, ...line(a, R.length, days), rent: r0(rent), fees: r0(fees), other: r0(other), otherPct: rent ? r1((other / rent) * 100) : null, feePct: rent ? r1((fees / rent) * 100) : null, adrRent: a.nights ? r0(rent / a.nights) : null, adrAll: a.nights ? r0((rent + fees) / a.nights) : null, revparAll: R.length && days ? r0((rent + fees) / (R.length * days)) : null, arrivals, cancelled, cancelRate: a.stays + cancelled ? r0((cancelled / (a.stays + cancelled)) * 100) : 0, lostRevenue: r0(lost), owed: r0(owed), owedStays: owedN, avgStay: a.stays ? r1(a.nights / a.stays) : null }
+  return { scope, label: SEGMENT_LABEL[scope], rooms: R.length, blocked: R.filter(r => r.blocked).length, days, ...line(a, R.length, days), rent: r0(rent), fees: r0(fees), other: r0(other), otherPct: rent ? r1((other / rent) * 100) : null, feePct: rent ? r1((fees / rent) * 100) : null, adrRent: a.nights ? r0(rent / a.nights) : null, adrAll: a.nights ? r0((rent + fees) / a.nights) : null, revparAll: R.length && days ? r0((rent + fees) / (R.length * days)) : null, arrivals, cancelled, cancelRate: a.stays + cancelled ? r0((cancelled / (a.stays + cancelled)) * 100) : 0, lostRevenue: r0(lost), owed: r0(owed), owedStays: owedN, avgStay: a.stays ? r1(losSum / a.stays) : null, oneNightPct: a.stays ? r0((one / a.stays) * 100) : null, weekPlusPct: a.stays ? r0((week / a.stays) * 100) : null }
 }
 
 export async function gardenDepth(from: string, to: string, scope: Scope = 'all', filter?: StayFilter | null) {
