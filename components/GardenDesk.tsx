@@ -302,9 +302,6 @@ function Setup({ d, owner, canEdit, onSync, busy }: { d: any; owner: boolean; ca
           ))}
         </LeanList>
       </LeanSection>
-      <LeanSection title="What this is">
-        <p className="text-[12.5px] text-muted px-1">The Garden Hotel&apos;s own tables (garden_rooms, garden_reservations, garden_tasks, garden_calls, garden_verifications) — separate from the VR portfolio. Cloudbeds is the property system of record; cleans, calls and checks are tracked here and a finished clean is written back to Cloudbeds as the room status. Reports come from these tables only.</p>
-      </LeanSection>
     </>
   )
 }

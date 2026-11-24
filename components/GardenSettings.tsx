@@ -95,7 +95,6 @@ function VoiceTab({ v, owner, save }: { v: any; owner: boolean; save: (v: any) =
   const pts: string[] = f.welcomeCallPoints || []
   return (
     <div className="space-y-4">
-      <p className="text-[12.5px] text-muted px-1">How the hotel — and Adam — sound to a guest. The same shape as Eve&apos;s review voice on the VR side, kept separate on purpose: review replies, welcome-call scripts and the owner letter all read from here.</p>
       <LeanSection title="Guidelines"><textarea value={f.guidelines || ''} onChange={e => set('guidelines', e.target.value)} disabled={!owner} rows={6} className={`${input} w-full`} /></LeanSection>
       <LeanSection title="Examples" n={ex.length} right={owner ? <button onClick={() => set('examples', [...ex, { situation: '', reply: '' }])} className="text-brand-700 inline-flex items-center gap-1"><Plus size={12} /> Add</button> : null}>
         <div className="space-y-2">{ex.map((e, i) => (
@@ -130,7 +129,6 @@ function PhoneTab({ p, status, owner, save }: { p: any; status: any; owner: bool
   const ENV: Record<string, string> = { talkroute: 'Shares the VR side\'s Talkroute key (Users & admin → Talkroute). List the hotel\'s own numbers below so its calls are told apart.', twilio: 'Vercel: TWILIO_ACCOUNT_SID + TWILIO_AUTH_TOKEN', ringcentral: 'Vercel: RINGCENTRAL_CLIENT_ID + RINGCENTRAL_CLIENT_SECRET + RINGCENTRAL_JWT (+ RINGCENTRAL_SERVER for sandbox)', webhook: 'Any system POSTs JSON to /api/garden/phone/webhook?token=… — one call or { calls: [...] }, each { id, direction, from, to, startedAt, durationSec, result?, recordingUrl? }', none: 'No phone system yet — calls are logged by hand on the desk.' }
   return (
     <div className="space-y-4">
-      <p className="text-[12.5px] text-muted px-1">Whichever system the hotel ends up on, calls land in one table, get matched to the guest by number, and feed the call desk: an answered call to a guest on the queue is an attempt; a missed call from a guest fires the missed-call trigger.</p>
       <div className="rounded-2xl border border-line bg-white p-4 grid grid-cols-1 sm:grid-cols-2 gap-3 text-[13px]">
         <label><Label t="Provider" /><select value={f.provider} onChange={e => setF({ ...f, provider: e.target.value })} disabled={!owner} className={`${input} w-full`}>{['none', 'talkroute', 'twilio', 'ringcentral', 'webhook'].map(k => <option key={k} value={k}>{k}</option>)}</select></label>
         <label><Label t="Voicemail if answered under (seconds)" /><input type="number" value={f.voicemailMaxSec} onChange={e => setF({ ...f, voicemailMaxSec: Number(e.target.value) })} disabled={!owner} className={`${input} w-full`} /></label>

@@ -51,7 +51,6 @@ export function AdamAdmin({ owner, canEdit, only }: { owner: boolean; canEdit: b
         <Pill title="Questions answered">{d.chats.length} recent chats</Pill>
         <button onClick={() => openAdam()} className="rounded-lg bg-emerald-700 text-white px-2.5 h-7 text-[12px] font-semibold">Ask {s.name}</button>
       </LeanHead>
-      <p className="text-[12.5px] text-muted mb-3">The Garden Hotel&apos;s own agent — his own memory, his own chat log, his own model. He knows nothing about the vacation rentals and Eve knows nothing about the hotel; that is by design.</p>
       <LeanTabs value={tab} onChange={setTab} tabs={[{ key: 'memory', label: 'What he knows', n: d.memories.length }, { key: 'files', label: 'Files', n: lib?.docs?.filter((x: any) => x.active).length }, { key: 'questions', label: 'His questions', n: (d.questions || []).filter((q: any) => q.status === 'open').length }, { key: 'shared', label: 'Shared from Stay', n: (d.shared || []).length }, { key: 'chats', label: 'Recent chats', n: d.chats.length }]} />
       </> : null}
       {tab === 'memory' ? (<>
@@ -70,7 +69,6 @@ export function AdamAdmin({ owner, canEdit, only }: { owner: boolean; canEdit: b
         ) : <LeanEmpty>Nothing yet. Tell him how the hotel works — here, or in a chat — and it lands on this list.</LeanEmpty>}
       </>) : null}
       {tab === 'files' ? (<>
-        <p className="text-[12.5px] text-muted mb-2">The hotel&apos;s written material — handbook files, SOPs, policies, training, reference. Upload a file, check the text, and file it: he reads it once and keeps the rules it states as memories, and can search and quote the whole thing any time.</p>
         {canEdit ? (
           <div className="rounded-2xl border border-line bg-white p-3 mb-3 space-y-2">
             <AgentFileDrop forWho="adam" onText={f => { setFd((x: any) => ({ ...x, body: f.text, source: f.name, file_path: f.path || '', title: x.title || f.name.replace(/\.[a-z0-9]+$/i, '').replace(/[-_]+/g, ' ') })); setFmsg(`Read ${f.name} (${f.method}) — ${f.words.toLocaleString()} words. Check it, then file it.`) }} />
@@ -137,7 +135,6 @@ export function AdamAdmin({ owner, canEdit, only }: { owner: boolean; canEdit: b
         ))}</LeanList>
       ) : <LeanEmpty>No questions yet. When he meets a policy he has not been told, he asks here; your answer becomes a memory.</LeanEmpty>) : null}
       {tab === 'shared' ? (<>
-        <p className="text-[12.5px] text-muted mb-2">The only bridge between the two brains: company-wide facts from the Stay Hospitality side that also apply to the hotel. Adam reads these; nothing else Eve knows reaches him.</p>
         {owner ? (
           <div className="flex flex-wrap gap-2 mb-3">
             <input value={share.title} onChange={e => setShare({ ...share, title: e.target.value })} placeholder="Title, e.g. Company payroll day" className="w-56 rounded-xl border border-line bg-white px-3 py-2 text-sm" />

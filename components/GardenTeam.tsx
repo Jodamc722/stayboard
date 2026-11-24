@@ -32,7 +32,6 @@ export function GardenTeam({ canEdit, rosterOnly }: { canEdit: boolean; rosterOn
       <LeanHead title="Team & access" icon={<Users size={20} className="text-emerald-700" />}>
         {msg ? <Pill tone={/error|only|must|cannot|pick|valid/i.test(msg) ? 'rose' : 'emerald'}>{msg}</Pill> : null}
       </LeanHead>
-      <p className="text-[12.5px] text-muted mb-3">The Garden Hotel&apos;s own people and access — separate from the vacation-rental side. One login works for both businesses; a hotel role decides what someone sees here, and only the owner or a VR admin can also open the VR side to them.</p>
       <LeanTabs value={tab} onChange={setTab} tabs={tabs} />
       {tab === 'roster' ? <Roster d={d} canEdit={canEdit} say={say} /> : null}
       {tab === 'logins' ? <Logins d={d} say={say} /> : null}

@@ -69,16 +69,24 @@ function Table({ title, note, cols, rows, max = 0, id, chips }: { title: string;
  *  the printed report. Click a column to make it the side the whole page looks at. */
 export function GardenSplit({ d, scope, onScope, compact = false }: { d: any; scope: Scope; onScope: (s: Scope) => void; compact?: boolean }) {
   const all = d.split[0], bo = d.split[2]
-  const rows: [string, (x: any) => string, string][] = [
-    ['Rooms', x => `${x.rooms}${x.blocked ? ` (${x.blocked} blocked)` : ''}`, 'rooms'], ['Rent', x => money(x.rent), 'rent'], ['Cleaning fees', x => money(x.fees), 'fees'], ['Cleaning on top of rent', x => x.feePct == null ? '—' : '+' + x.feePct + '%', ''], ['Room revenue (rent + cleaning)', x => money((x.rent || 0) + (x.fees || 0)), '__room'], ['Parking and add-ons (not in ADR)', x => money(x.other), 'other'], ['Total revenue', x => money((x.rent || 0) + (x.fees || 0) + (x.other || 0)), '__total'],
-    ['Room nights sold', x => int(x.nights), 'nights'], ['Occupancy', x => pct(x.occupancy), ''],
-    ['ADR, rent only', x => money(x.adrRent), ''], ['ADR with cleaning', x => money(x.adrAll), ''], [d.rentOnly ? 'RevPAR, rent only' : 'RevPAR with cleaning', x => money(x.revpar), ''], ['Stays', x => int(x.stays), 'stays'], ['Arrivals in the period', x => int(x.arrivals), 'arrivals'], ['Average stay', x => x.avgStay == null ? '—' : x.avgStay + ' nights', ''],
+  const [more, setMore] = useState(false)
+  // The eight a person reads first; the make-up of the revenue and the rest sit behind "All rows".
+  const MAIN: [string, (x: any) => string, string][] = [
+    ['Rooms', x => String(x.rooms), 'rooms'], [d.rentOnly ? 'Revenue (rent only)' : 'Revenue (rent + cleaning)', x => money(x.revenue), 'revenue'], ['Parking and add-ons', x => money(x.other), 'other'],
+    ['Room nights sold', x => int(x.nights), 'nights'], ['Occupancy', x => pct(x.occupancy), ''], ['ADR', x => money(x.adr), ''], ['RevPAR', x => money(x.revpar), ''], ['Stays', x => int(x.stays), 'stays'],
+  ]
+  const REST: [string, (x: any) => string, string][] = [
+    ['Rent', x => money(x.rent), 'rent'], ['Cleaning fees', x => money(x.fees), 'fees'], ['Cleaning on top of rent', x => x.feePct == null ? '—' : '+' + x.feePct + '%', ''], ['Total revenue with parking', x => money((x.rent || 0) + (x.fees || 0) + (x.other || 0)), '__total'],
+    ['ADR, rent only', x => money(x.adrRent), ''], ['ADR with cleaning', x => money(x.adrAll), ''], ['Blocked in Cloudbeds', x => int(x.blocked), 'blocked'],
+    ['Arrivals in the period', x => int(x.arrivals), 'arrivals'], ['Average stay', x => x.avgStay == null ? '—' : x.avgStay + ' nights', ''],
     ['Cancelled / no-show', x => `${int(x.cancelled)} (${x.cancelRate}%)`, 'cancelled'], ['Revenue lost to cancellations', x => money(x.lostRevenue), 'lostRevenue'], ['Balance owed', x => `${money(x.owed)} · ${x.owedStays} stays`, 'owed'],
   ]
+  // A row of zeros says nothing: parking and add-ons only shows when there is some.
+  const rows = (compact && !more ? MAIN : [...MAIN, ...REST]).filter(r => r[2] !== 'other' || d.split.some((x: any) => x.other))
   const pad = compact ? 'px-3 py-1' : 'px-3 py-1.5'
   return (
     <section className="mb-5">
-      <div className="flex items-baseline gap-2 mb-1 px-1"><h2 className="gh-display text-[13px] font-bold tracking-wide uppercase text-ink">Whole property, Garden and Botanica</h2><span className="np text-[11.5px] text-muted">click a column to look at that side</span></div>
+      <div className="flex items-baseline gap-2 mb-1 px-1"><h2 className="gh-display text-[13px] font-bold tracking-wide uppercase text-ink">Whole property, Garden and Botanica</h2><span className="np text-[11.5px] text-muted">click a column to look at that side</span>{compact ? <button onClick={() => setMore(m => !m)} className="np ml-auto text-[12px] font-semibold text-brand-700 hover:underline">{more ? 'Fewer rows' : 'All rows'}</button> : null}</div>
       <div className="rounded-xl border border-line bg-white overflow-x-auto">
         <table className="w-full text-[12.5px] tabular-nums">
           <thead><tr className="border-b border-line">
@@ -90,11 +98,11 @@ export function GardenSplit({ d, scope, onScope, compact = false }: { d: any; sc
             <tr key={label} className="border-b border-line/60 last:border-0">
               <td className={pad + ' text-muted'}>{label}</td>
               {d.split.map((x: any) => <td key={x.scope} className={pad + ' text-right ' + (x.scope === scope ? 'bg-brand-50 font-semibold text-ink' : 'text-ink')}>{f(x)}</td>)}
-              <td className={pad + ' text-right text-muted'}>{key === '__room' ? (all.rent + all.fees ? Math.round(((bo.rent + bo.fees) / (all.rent + all.fees)) * 100) + '%' : '') : key === '__total' ? (all.rent + all.fees + all.other ? Math.round(((bo.rent + bo.fees + bo.other) / (all.rent + all.fees + all.other)) * 100) + '%' : '') : key && all[key] ? Math.round((bo[key] / all[key]) * 100) + '%' : ''}</td>
+              <td className={pad + ' text-right text-muted'}>{key === '__total' ? (all.rent + all.fees + all.other ? Math.round(((bo.rent + bo.fees + bo.other) / (all.rent + all.fees + all.other)) * 100) + '%' : '') : key && all[key] ? Math.round((bo[key] / all[key]) * 100) + '%' : ''}</td>
             </tr>))}</tbody>
         </table>
       </div>
-      <p className="text-[11.5px] text-muted mt-1.5 px-1">Botanica = the rooms sold as Botanica through Guesty, matched by room number. A stay is counted on the side its room is on, whichever system it was booked in. Rent is the room charge before taxes (Cloudbeds) or the accommodation fare (Guesty). Cleaning is the Guesty cleaning fee and counts in ADR; a Cloudbeds rate has no separate cleaning fee. Parking (Guesty) and add-on items (Cloudbeds) are revenue but stay out of ADR. Taxes, and Guesty's revenue, service and marketing fees, are not counted.</p>
+      {compact ? null : <p className="text-[11.5px] text-muted mt-1.5 px-1">Botanica = the rooms sold as Botanica through Guesty, matched by room number. Revenue is rent plus cleaning; parking and add-ons are separate; taxes are not counted.</p>}
     </section>
   )
 }
@@ -145,7 +153,7 @@ export function GardenDepth({ from, to, scope, onScope, api = '/api/garden/reven
       </div>
 
       <div className={splitAbove ? 'hidden print:block' : ''}><GardenSplit d={d} scope={scope} onScope={onScope} /></div>
-      {cur.nights ? <div className="np flex items-center gap-1.5 flex-wrap mb-4"><span className="text-[10.5px] font-semibold uppercase tracking-wider text-muted mr-1">Jump to</span>{JUMP.map(([id, l]) => <button key={id} onClick={() => document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })} className="text-[12px] font-semibold px-2.5 py-1 rounded-lg border border-line bg-white text-muted hover:text-ink">{l}</button>)}<span className="text-[11.5px] text-muted ml-1">Click any column heading to sort; use the box on a table to filter it.</span></div> : null}
+      {cur.nights ? <div className="np flex items-center gap-1.5 flex-wrap mb-4"><span className="text-[10.5px] font-semibold uppercase tracking-wider text-muted mr-1">Jump to</span>{JUMP.map(([id, l]) => <button key={id} onClick={() => document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })} className="text-[12px] font-semibold px-2.5 py-1 rounded-lg border border-line bg-white text-muted hover:text-ink">{l}</button>)}</div> : null}
 
       {!cur.nights ? <LeanEmpty>No stays for {d.label} in this period.</LeanEmpty> : (<>
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-x-4">

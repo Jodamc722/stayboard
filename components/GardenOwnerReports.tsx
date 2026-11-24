@@ -40,7 +40,6 @@ export function GardenOwnerReports({ canEdit, owner }: { canEdit: boolean; owner
         <Pill title="Reports generated for the hotel">{d.reports.length} reports</Pill>
         <Pill tone="brand" title="Design templates — sections, cards, copy and theme">{d.templates.length} templates</Pill>
       </LeanHead>
-      <p className="text-[12.5px] text-muted mb-3">The same report the vacation-rental owners get — same page, same editor, same themes and share link — built from the hotel&apos;s datasets through a template. The Garden theme is the hotel&apos;s own site: sand, forest green, Playfair over Montserrat.</p>
       {note ? <p className="text-[12px] text-rose-700 mb-2">{note}</p> : null}
       <LeanTabs value={tab} onChange={setTab} tabs={[{ key: 'reports', label: 'Reports', n: d.reports.length }, { key: 'templates', label: 'Templates', n: d.templates.length }, { key: 'datasets', label: 'Datasets' }]} />
 

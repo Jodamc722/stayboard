@@ -115,16 +115,17 @@ export function GardenViews({ api, from, to, scope, fq, data }: { api: string; f
     const csv = rows.map(r => r.map(c => '"' + String(c).replace(/"/g, '""') + '"').join(',')).join('\n')
     const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' })); a.download = `garden-${dim.key}-${from}-to-${to}.csv`; a.click(); URL.revokeObjectURL(a.href)
   }
-  const chip = (on: boolean) => `text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border ${on ? 'bg-ink text-white border-ink' : 'bg-white text-muted border-line hover:text-ink'}`
   const th = 'px-3 py-2 font-semibold text-right whitespace-nowrap'
 
   return (
     <div>
-      <div className="grid gap-2 mb-3">
-        <div className="flex items-center gap-1.5 flex-wrap"><span className="w-[72px] shrink-0 text-[10.5px] font-semibold uppercase tracking-wider text-muted">View by</span>{DIMS.map(x => <button key={x.key} title={x.hint} onClick={() => { setDimKey(x.key); keep('by', x.key) }} className={chip(dimKey === x.key)}>{x.label}</button>)}</div>
-        <div className="flex items-center gap-1.5 flex-wrap"><span className="w-[72px] shrink-0 text-[10.5px] font-semibold uppercase tracking-wider text-muted">Measure</span>{MEASURES.map(x => <button key={x.key} onClick={() => { setMKey(x.key); keep('measure', x.key) }} className={chip(mKey === x.key)}>{x.label}</button>)}</div>
-        <div className="flex items-center gap-1.5 flex-wrap"><span className="w-[72px] shrink-0 text-[10.5px] font-semibold uppercase tracking-wider text-muted">Split by</span><button onClick={() => { setSplitKey(''); keep('split', '') }} className={chip(!split)}>Nothing</button>{DIMS.filter(x => x.key !== dimKey && ['channel', 'side', 'los', 'lead', 'type', 'dow'].includes(x.key)).map(x => <button key={x.key} title={x.hint} onClick={() => { setSplitKey(x.key); keep('split', x.key) }} className={chip(split?.key === x.key)}>{x.label}</button>)}
-          <button onClick={exportCsv} className="ml-auto inline-flex items-center gap-1 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-line bg-white text-ink hover:bg-app"><Download size={12} /> Export this view</button></div>
+      <div className="flex items-center gap-2 flex-wrap mb-3">
+        {([['View by', dimKey, (v: string) => { setDimKey(v); keep('by', v) }, DIMS.map(x => [x.key, x.label])], ['Measure', mKey, (v: string) => { setMKey(v); keep('measure', v) }, MEASURES.map(x => [x.key, x.label])], ['Split by', split?.key || '', (v: string) => { setSplitKey(v); keep('split', v) }, [['', 'Nothing'], ...DIMS.filter(x => x.key !== dimKey && ['channel', 'side', 'los', 'lead', 'type', 'dow'].includes(x.key)).map(x => [x.key, x.label])]]] as [string, string, (v: string) => void, string[][]][]).map(([label, value, set, opts]) => (
+          <label key={label} className="inline-flex items-center gap-1.5 text-[12px] text-muted">{label}
+            <select value={value} onChange={e => set(e.target.value)} className="text-[12.5px] font-semibold border border-line rounded-lg pl-2.5 pr-1 py-1.5 bg-white text-ink outline-none">{opts.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select>
+          </label>
+        ))}
+        <button onClick={exportCsv} className="ml-auto inline-flex items-center gap-1 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-line bg-white text-ink hover:bg-app"><Download size={12} /> Export</button>
       </div>
 
       {view.keys.length ? (
@@ -163,7 +164,7 @@ export function GardenViews({ api, from, to, scope, fq, data }: { api: string; f
               </tr>
             </tbody>
           </table>
-          <p className="text-[11.5px] text-muted px-3.5 py-2 border-t border-line/60">Revenue and room nights are the part of each stay inside {from} to {to}. A stay in two rooms counts as one stay. {d.rentOnly ? 'Revenue here is rent only.' : 'Revenue here is rent plus cleaning.'} Parking and add-ons are counted separately.{view.unknown ? ` ${int(view.unknown)} stay${view.unknown === 1 ? ' has' : 's have'} no ${dim.key.startsWith('b') || dim.key === 'lead' ? 'booking date' : 'value'} and ${view.unknown === 1 ? 'is' : 'are'} left out of this view.` : ''}{d.partial ? ' Some bookings could not be read just now, so these numbers may be short — refresh in a moment.' : ''}</p>
+          {view.unknown || d.partial ? <p className="text-[11.5px] text-muted px-3.5 py-2 border-t border-line/60">{view.unknown ? `${int(view.unknown)} stay${view.unknown === 1 ? ' has' : 's have'} no ${dim.key.startsWith('b') || dim.key === 'lead' ? 'booking date' : 'value'} and ${view.unknown === 1 ? 'is' : 'are'} left out of this view.` : ''}{d.partial ? ' Some bookings could not be read just now, so these numbers may be short.' : ''}</p> : null}
         </div>
       ) : <LeanEmpty>No stays in this period{fq ? ' with these filters' : ''}.</LeanEmpty>}
     </div>

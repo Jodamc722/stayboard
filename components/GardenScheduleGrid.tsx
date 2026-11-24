@@ -84,7 +84,6 @@ export function GardenScheduleGrid({ canEdit }: { canEdit: boolean }) {
               <button onClick={() => { if (window.confirm(`Remove ${s.name} from the roster? Past shifts stay.`)) act('del' + s.id, { op: 'delete_staff', id: s.id }) }} className="text-muted hover:text-rose-700" aria-label={`Remove ${s.name}`}><Trash2 size={12} /></button>
             </span>
           ))}</div> : null}
-          <p className="text-[11px] text-muted mt-2">Housekeepers Cloudbeds assigns rooms to are added here automatically on each sync.</p>
         </div>
       ) : null}
 
@@ -143,7 +142,6 @@ export function GardenScheduleGrid({ canEdit }: { canEdit: boolean }) {
           </tbody>
         </table>
       </div>
-      <p className="text-[11px] text-muted mt-2">Housekeepers needed = checkouts + half the stayovers, 12 rooms a shift. One front desk a day. Clock-ins appear once Homebase is connected for the hotel.</p>
 
       {edit ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/20" onClick={() => setEdit(null)}>

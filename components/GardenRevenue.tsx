@@ -73,18 +73,18 @@ function Multi({ label, all, picked, onChange }: { label: string; all: { name: s
 type Scope = 'all' | 'garden' | 'botanica'
 
 function Delta({ cur, prev, unit }: { cur: number | null; prev: number | null; unit: 'pct' | 'pts' }) {
-  if (cur == null || prev == null || (unit === 'pct' && !prev)) return <span className="text-muted">no earlier period to compare</span>
+  if (cur == null || prev == null || (unit === 'pct' && !prev)) return <span className="text-muted">new</span>
   const v = unit === 'pct' ? Math.round(((cur - prev) / prev) * 100) : Math.round((cur - prev) * 10) / 10
-  if (!v) return <span className="text-muted">same as the period before</span>
+  if (!v) return <span className="text-muted">no change</span>
   return <span className={v > 0 ? 'text-emerald-700 font-semibold' : 'text-rose-700 font-semibold'}>{v > 0 ? '▲' : '▼'} {Math.abs(v)}{unit === 'pct' ? '%' : ' pts'}</span>
 }
 function Kpi({ label, value, children, sub }: { label: string; value: string; children?: React.ReactNode; sub?: string }) {
+  // Three lines, always: what it is, the number, one short line under it (the change, then the detail).
   return (
     <div className="rounded-xl border border-line bg-white px-3.5 py-3 min-w-0">
       <div className="text-[10.5px] font-semibold uppercase tracking-wider text-muted">{label}</div>
       <div className="text-[24px] font-semibold tabular-nums text-ink leading-tight mt-0.5">{value}</div>
-      <div className="text-[11.5px] mt-0.5 leading-snug">{children}</div>
-      {sub ? <div className="text-[11px] text-muted leading-snug">{sub}</div> : null}
+      <div className="text-[11px] text-muted leading-snug mt-0.5">{children ? <>{children} · </> : null}{sub}</div>
     </div>
   )
 }
@@ -110,6 +110,7 @@ export function GardenRevenue({ api = '/api/garden/revenue', shared = false, can
   const [fill, setFill] = useState('')
   const [filter, setFilterState] = useState<Filter>(NO_FILTER)
   const [refreshing, setRefreshing] = useState('')
+  const [showFilters, setShowFilters] = useState(false)
   const [share, setShare] = useState<any | null>(null)
   const [copied, setCopied] = useState('')
   // REVENUE = RENT + CLEANING, or rent alone; parking is its own line (Jon and the revenue team, 2026-11-23). Travels with the filters.
@@ -122,7 +123,7 @@ export function GardenRevenue({ api = '/api/garden/revenue', shared = false, can
   const setScope = (v: Scope) => { setScopeState(v); try { const u = new URL(location.href); if (v === 'all') u.searchParams.delete('scope'); else u.searchParams.set('scope', v); history.replaceState(null, '', u.toString()) } catch {} }
 
   // The period lives in the URL, so a link or a reload opens the same one.
-  useEffect(() => { try { const sp = new URLSearchParams(location.search); const sc = sp.get('scope'); if (sc === 'garden' || sc === 'botanica') setScopeState(sc); if (sp.get('rev') === 'rent') setRentOnlyState(true); const vw = sp.get('view'); if (vw && ['views', 'depth', 'channels', 'bookings', 'ahead', 'types'].includes(vw)) setTab(vw as Tab); const L = (k: string) => (sp.get(k) || '').split('|').filter(Boolean); const R = (k: string, o: [string, string][]) => o.some(x => x[0] === sp.get(k)) ? sp.get(k)! : ''; setFilterState({ ch: L('ch'), rt: L('rt'), wing: L('wing'), los: R('los', LOS_OPTS), lead: R('lead', LEAD_OPTS), origin: R('origin', ORIGIN_OPTS) }); const f = sp.get('from'), t = sp.get('to'); if (f && t && /^\d{4}-\d{2}-\d{2}$/.test(f) && /^\d{4}-\d{2}-\d{2}$/.test(t) && t >= f) { setRange([f, t]); setPreset(PRESETS.find(p => { const r = p.range(todayNY()); return r[0] === f && r[1] === t })?.key || 'custom') } } catch {} }, [])
+  useEffect(() => { try { const sp = new URLSearchParams(location.search); const sc = sp.get('scope'); if (sc === 'garden' || sc === 'botanica') setScopeState(sc); if (sp.get('rev') === 'rent') setRentOnlyState(true); const vw = sp.get('view'); if (vw && ['views', 'depth', 'bookings', 'ahead'].includes(vw)) setTab(vw as Tab); const L = (k: string) => (sp.get(k) || '').split('|').filter(Boolean); const R = (k: string, o: [string, string][]) => o.some(x => x[0] === sp.get(k)) ? sp.get(k)! : ''; setFilterState({ ch: L('ch'), rt: L('rt'), wing: L('wing'), los: R('los', LOS_OPTS), lead: R('lead', LEAD_OPTS), origin: R('origin', ORIGIN_OPTS) }); const f = sp.get('from'), t = sp.get('to'); if (f && t && /^\d{4}-\d{2}-\d{2}$/.test(f) && /^\d{4}-\d{2}-\d{2}$/.test(t) && t >= f) { setRange([f, t]); setPreset(PRESETS.find(p => { const r = p.range(todayNY()); return r[0] === f && r[1] === t })?.key || 'custom') } } catch {} }, [])
   const go = (r: [string, string], key: string) => { setRange(r); setPreset(key); try { const u = new URL(location.href); u.searchParams.set('from', r[0]); u.searchParams.set('to', r[1]); history.replaceState(null, '', u.toString()) } catch {} }
   const load = useCallback(async () => {
     setLoading(true)
@@ -195,9 +196,26 @@ export function GardenRevenue({ api = '/api/garden/revenue', shared = false, can
 
   const head = (
     <div className="space-y-2 mb-4">
-      <div className="flex items-center gap-1.5 flex-wrap">
-        {PRESETS.map(p => <button key={p.key} onClick={() => go(p.range(t0), p.key)} className={`text-[12px] font-semibold px-3 py-1.5 rounded-lg border ${preset === p.key ? 'bg-ink text-white border-ink' : 'bg-white text-muted border-line hover:text-ink'}`}>{p.label}</button>)}
+      {/* Row 1: the period, and how fresh the numbers are. */}
+      <div className="flex items-center gap-2 flex-wrap">
+        <select value={PRESETS.some(p => p.key === preset) ? preset : 'custom'} onChange={e => { const p = PRESETS.find(x => x.key === e.target.value); if (p) go(p.range(t0), p.key) }} aria-label="Period" className="text-[12.5px] font-semibold border border-line rounded-lg pl-2.5 pr-1 py-1.5 bg-white text-ink outline-none">
+          {PRESETS.map(p => <option key={p.key} value={p.key}>{p.label}</option>)}{PRESETS.some(p => p.key === preset) ? null : <option value="custom">Custom dates</option>}
+        </select>
+        <div className="inline-flex items-center gap-1">
+          <button onClick={() => shift(-1)} aria-label="Earlier period" title="Earlier period" className="p-1.5 rounded-lg border border-line bg-white text-muted hover:text-ink"><ChevronLeft size={15} /></button>
+          <button onClick={() => shift(1)} aria-label="Later period" title="Later period" className="p-1.5 rounded-lg border border-line bg-white text-muted hover:text-ink"><ChevronRight size={15} /></button>
+        </div>
+        <input type="date" aria-label="From" value={range[0]} max={range[1]} onChange={e => e.target.value && go([e.target.value, e.target.value > range[1] ? e.target.value : range[1]], 'custom')} className="text-[12px] font-semibold border border-line rounded-lg px-2 py-1.5 bg-white text-ink outline-none" />
+        <span className="text-muted text-[12px]">to</span>
+        <input type="date" aria-label="To" value={range[1]} min={range[0]} onChange={e => e.target.value && go([range[0], e.target.value], 'custom')} className="text-[12px] font-semibold border border-line rounded-lg px-2 py-1.5 bg-white text-ink outline-none" />
+        <span className="text-[12px] text-muted inline-flex items-center gap-1.5">{loading ? <Loader2 size={13} className="text-brand-600 animate-spin" /> : null}{span} night{span === 1 ? '' : 's'}</span>
+        <span className="ml-auto inline-flex items-center gap-2 text-[11.5px] text-muted">
+          <span title={d?.syncAt ? new Date(d.syncAt).toLocaleString('en-US', { timeZone: 'America/New_York' }) + ' ET' : ''}>{refreshing || <>Cloudbeds read {ago(d?.syncAt || null)}</>}</span>
+          <button onClick={refresh} disabled={refreshing === 'Reading Cloudbeds…'} className="inline-flex items-center gap-1 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-line bg-white text-ink hover:bg-app disabled:opacity-60"><RefreshCw size={12} className={refreshing === 'Reading Cloudbeds…' ? 'animate-spin' : ''} /> Refresh</button>
+          {canShare && !shared ? <button onClick={() => { setShare({ busy: true }); shareCall('status') }} className="inline-flex items-center gap-1 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg bg-ink text-white"><Share2 size={12} /> Share</button> : null}
+        </span>
       </div>
+      {/* Row 2: which side, which revenue, and the filters behind one button. */}
       <div className="flex items-center gap-2 flex-wrap">
         <div className="inline-flex rounded-lg border border-line overflow-hidden text-[12.5px]" title="Botanica = the rooms sold as Botanica through Guesty (matched by room number). Garden = every other room.">
           {([['all', 'Whole property'], ['garden', 'Garden'], ['botanica', 'Botanica']] as [Scope, string][]).map(([k, l]) => <button key={k} onClick={() => setScope(k)} className={'px-3 py-1.5 font-semibold border-l border-line first:border-l-0 ' + (scope === k ? 'bg-brand-600 text-white' : 'bg-white text-muted hover:text-ink')}>{l}{d?.segments ? <span className="ml-1 font-normal opacity-80">{d.segments[k]}</span> : null}</button>)}
@@ -205,29 +223,19 @@ export function GardenRevenue({ api = '/api/garden/revenue', shared = false, can
         <div className="inline-flex rounded-lg border border-line overflow-hidden text-[12.5px]" title="Cleaning counts in revenue and ADR. Parking and add-ons are shown separately. Taxes and the Guesty revenue fee are never included.">
           {([[false, 'With cleaning'], [true, 'Rent only']] as [boolean, string][]).map(([k, l]) => <button key={l} onClick={() => setRentOnly(k)} className={'px-3 py-1.5 font-semibold border-l border-line first:border-l-0 ' + (rentOnly === k ? 'bg-ink text-white' : 'bg-white text-muted hover:text-ink')}>{l}</button>)}
         </div>
-        <div className="inline-flex items-center gap-1">
-          <button onClick={() => shift(-1)} aria-label="Earlier period" className="p-1.5 rounded-lg border border-line bg-white text-muted hover:text-ink"><ChevronLeft size={15} /></button>
-          <button onClick={() => shift(1)} aria-label="Later period" className="p-1.5 rounded-lg border border-line bg-white text-muted hover:text-ink"><ChevronRight size={15} /></button>
+        <button onClick={() => setShowFilters(v => !v)} className={`inline-flex items-center gap-1.5 text-[12.5px] font-semibold px-3 py-1.5 rounded-lg border ${filterN ? 'bg-brand-50 text-brand-800 border-brand-300' : 'bg-white text-muted border-line hover:text-ink'}`}><SlidersHorizontal size={13} /> Filters{filterN ? ` · ${filterN}` : ''}<ChevronDown size={12} className={showFilters || filterN ? 'rotate-180' : ''} /></button>
+        {filterN ? <button onClick={() => setFilter(NO_FILTER)} className="inline-flex items-center gap-1 text-[12px] font-semibold px-1.5 py-1.5 rounded-lg text-muted hover:text-ink"><X size={12} /> Clear</button> : null}
+      </div>
+      {showFilters || filterN ? (
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <Multi label="Channel" all={d?.options?.channels || []} picked={filter.ch} onChange={v => setFilter({ ...filter, ch: v })} />
+          <Multi label="Room type" all={d?.options?.types || []} picked={filter.rt} onChange={v => setFilter({ ...filter, rt: v })} />
+          <Multi label="Wing" all={d?.options?.wings || []} picked={filter.wing} onChange={v => setFilter({ ...filter, wing: v })} />
+          {([['los', LOS_OPTS], ['lead', LEAD_OPTS], ['origin', ORIGIN_OPTS]] as ['los' | 'lead' | 'origin', [string, string][]][]).map(([k, opts]) => (
+            <select key={k} value={filter[k]} onChange={e => setFilter({ ...filter, [k]: e.target.value })} aria-label={opts[0][1]} className={`text-[12px] font-semibold pl-2.5 pr-1 py-1.5 rounded-lg border outline-none ${filter[k] ? 'bg-brand-50 text-brand-800 border-brand-300' : 'bg-white text-muted border-line'}`}>{opts.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select>
+          ))}
         </div>
-        <label className="inline-flex items-center gap-1.5 text-[12px] text-muted">From <input type="date" value={range[0]} max={range[1]} onChange={e => e.target.value && go([e.target.value, e.target.value > range[1] ? e.target.value : range[1]], 'custom')} className="text-[12px] font-semibold border border-line rounded-lg px-2.5 py-1.5 bg-white text-ink outline-none" /></label>
-        <label className="inline-flex items-center gap-1.5 text-[12px] text-muted">to <input type="date" value={range[1]} min={range[0]} onChange={e => e.target.value && go([range[0], e.target.value], 'custom')} className="text-[12px] font-semibold border border-line rounded-lg px-2.5 py-1.5 bg-white text-ink outline-none" /></label>
-        <span className="text-sm font-semibold text-ink inline-flex items-center gap-1.5 ml-1 order-last sm:order-none">{loading ? <Loader2 size={15} className="text-brand-600 animate-spin" /> : <CalendarRange size={15} className="text-brand-600" />} {dayLabel(range[0], range[0].slice(0, 4) !== range[1].slice(0, 4))} – {dayLabel(range[1], true)} <span className="text-[12px] font-medium text-muted">· {span} night{span === 1 ? '' : 's'}</span></span>
-      </div>
-      <div className="flex items-center gap-1.5 flex-wrap">
-        <span className="inline-flex items-center gap-1 text-[10.5px] font-semibold uppercase tracking-wider text-muted mr-0.5"><SlidersHorizontal size={12} /> Filters</span>
-        <Multi label="Channel" all={d?.options?.channels || []} picked={filter.ch} onChange={v => setFilter({ ...filter, ch: v })} />
-        <Multi label="Room type" all={d?.options?.types || []} picked={filter.rt} onChange={v => setFilter({ ...filter, rt: v })} />
-        <Multi label="Wing" all={d?.options?.wings || []} picked={filter.wing} onChange={v => setFilter({ ...filter, wing: v })} />
-        {([['los', LOS_OPTS], ['lead', LEAD_OPTS], ['origin', ORIGIN_OPTS]] as ['los' | 'lead' | 'origin', [string, string][]][]).map(([k, opts]) => (
-          <select key={k} value={filter[k]} onChange={e => setFilter({ ...filter, [k]: e.target.value })} aria-label={opts[0][1]} className={`text-[12px] font-semibold pl-2.5 pr-1 py-1.5 rounded-lg border outline-none ${filter[k] ? 'bg-brand-50 text-brand-800 border-brand-300' : 'bg-white text-muted border-line'}`}>{opts.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select>
-        ))}
-        {filterN ? <button onClick={() => setFilter(NO_FILTER)} className="inline-flex items-center gap-1 text-[12px] font-semibold px-2 py-1.5 rounded-lg text-muted hover:text-ink"><X size={12} /> Clear {filterN}</button> : null}
-        <span className="ml-auto inline-flex items-center gap-2 text-[11.5px] text-muted">
-          <span title={d?.syncAt ? new Date(d.syncAt).toLocaleString('en-US', { timeZone: 'America/New_York' }) + ' ET' : ''}>{refreshing || <>Cloudbeds read {ago(d?.syncAt || null)}</>}</span>
-          <button onClick={refresh} disabled={refreshing === 'Reading Cloudbeds…'} className="inline-flex items-center gap-1 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-line bg-white text-ink hover:bg-app disabled:opacity-60"><RefreshCw size={12} className={refreshing === 'Reading Cloudbeds…' ? 'animate-spin' : ''} /> Refresh</button>
-          {canShare && !shared ? <button onClick={() => { setShare({ busy: true }); shareCall('status') }} className="inline-flex items-center gap-1 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg bg-ink text-white"><Share2 size={12} /> Share</button> : null}
-        </span>
-      </div>
+      ) : null}
       {share ? (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/25 p-4" onClick={() => setShare(null)}>
           <div className="w-full max-w-md rounded-2xl bg-white shadow-xl p-5" onClick={e => e.stopPropagation()}>
@@ -281,16 +289,23 @@ export function GardenRevenue({ api = '/api/garden/revenue', shared = false, can
 
       {/* The period in six numbers, each against the one before it. */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
-        <Kpi label={(future ? 'On the books' : 'Revenue') + (rentOnly ? ' · rent only' : ' · rent + cleaning')} value={money(b.revenue)} sub={`rent ${money(b.rent)} · cleaning ${money(b.fees)}${b.feePct != null ? ` (+${b.feePct}%)` : ''} · parking and add-ons ${money(b.other)} on top${prevCovered ? ' · ' + prevLabel : ''}`}>{prevCovered ? <Delta cur={b.revenue} prev={p.revenue} unit="pct" /> : <span className="text-muted">earlier period not loaded</span>}</Kpi>
-        <Kpi label="Occupancy" value={pct(b.occupancy)} sub={`${b.nights.toLocaleString()} of ${(d.rooms * span).toLocaleString()} room nights`}>{prevCovered ? <Delta cur={b.occupancy} prev={p.occupancy} unit="pts" /> : null}</Kpi>
-        <Kpi label={rentOnly ? 'ADR · rent only' : 'ADR · with cleaning'} value={money(b.adr)} sub={`rent only ${money(b.adrRent)} · with cleaning ${money(b.adrAll)}`}>{prevCovered ? <Delta cur={b.adr} prev={p.adr} unit="pct" /> : null}</Kpi>
-        <Kpi label={rentOnly ? 'RevPAR · rent only' : 'RevPAR · with cleaning'} value={money(b.revpar)} sub={`revenue per room, ${d.rooms} rooms`}>{prevCovered ? <Delta cur={b.revpar} prev={p.revpar} unit="pct" /> : null}</Kpi>
-        <Kpi label="Stays" value={b.bookings.toLocaleString()} sub={`${b.cancelled} cancelled or no-show`}>{prevCovered ? <Delta cur={b.bookings} prev={p.bookings} unit="pct" /> : null}</Kpi>
-        <Kpi label={future ? 'Booked so far' : 'Booked in this period'} value={past || !future ? String(d.booked.bookings) : '—'} sub={past || !future ? `${money(d.booked.revenue)} · for any stay date` : 'the period has not started'}>{d.booked.cancelled ? <span className="text-muted">{d.booked.cancelled} of them since cancelled</span> : <span className="text-muted">new reservations made</span>}</Kpi>
+        <Kpi label={future ? 'On the books' : 'Revenue'} value={money(b.revenue)} sub={rentOnly ? 'rent only' : `rent ${money(b.rent)} + cleaning ${money(b.fees)}`}>{prevCovered ? <Delta cur={b.revenue} prev={p.revenue} unit="pct" /> : null}</Kpi>
+        <Kpi label="Occupancy" value={pct(b.occupancy)} sub={`${b.nights.toLocaleString()} room nights`}>{prevCovered ? <Delta cur={b.occupancy} prev={p.occupancy} unit="pts" /> : null}</Kpi>
+        <Kpi label="ADR" value={money(b.adr)} sub={rentOnly ? `with cleaning ${money(b.adrAll)}` : `rent only ${money(b.adrRent)}`}>{prevCovered ? <Delta cur={b.adr} prev={p.adr} unit="pct" /> : null}</Kpi>
+        <Kpi label="RevPAR" value={money(b.revpar)} sub={`${d.rooms} rooms`}>{prevCovered ? <Delta cur={b.revpar} prev={p.revpar} unit="pct" /> : null}</Kpi>
+        <Kpi label="Stays" value={b.bookings.toLocaleString()} sub={`${b.cancelled} cancelled`}>{prevCovered ? <Delta cur={b.bookings} prev={p.bookings} unit="pct" /> : null}</Kpi>
+        <Kpi label={future ? 'Booked so far' : 'Booked in period'} value={past || !future ? String(d.booked.bookings) : '—'} sub={past || !future ? `${money(d.booked.revenue)}${d.booked.cancelled ? ` · ${d.booked.cancelled} since cancelled` : ''}` : 'not started yet'} />
       </div>
-      <p className="text-[11.5px] text-muted mt-1.5">{scope === 'all' ? 'Whole property' : scope === 'garden' ? 'Garden rooms only' : 'Botanica rooms only'}: {d.rooms} rooms{d.segments?.blocked ? `, ${d.segments.blocked} of them blocked in Cloudbeds` : ''}.{d.guesty?.bookings ? ` Includes ${d.guesty.bookings} Botanica booking${d.guesty.bookings === 1 ? '' : 's'} from Guesty (${money(d.guesty.revenue)}).` : ''}{filterN ? ` ${filterN} filter${filterN === 1 ? '' : 's'} on: every number below counts only what matches.` : ''}</p>
-      <p className="text-[11.5px] text-muted mt-0.5">Rent is the room charge before taxes (Cloudbeds) or the accommodation fare (Guesty). Cleaning is the Guesty cleaning fee and counts in ADR. Parking (Guesty) and add-on items (Cloudbeds) are revenue shown separately, not in ADR. Taxes, and the Guesty revenue, service and marketing fees, are not counted.{d.basis?.gross ? ` ${d.basis.gross.toLocaleString()} Cloudbeds stay${d.basis.gross === 1 ? ' has' : 's have'} no breakdown from Cloudbeds yet and count${d.basis.gross === 1 ? 's' : ''} at the reservation total.` : ''}</p>
-      {d.today && range[0] <= t0 && range[1] >= t0 ? <p className="text-[12px] text-ink mt-2"><span className="text-[10.5px] font-semibold uppercase tracking-wider text-muted mr-2">Today, live from Cloudbeds</span>{pct(d.today.occupancy)} occupied · {d.today.arrivals} arrivals · {d.today.departures} departures · {d.today.inHouse} in house · {d.today.bookings} booked today</p> : null}
+      {/* One quiet line; how it is counted sits behind a click. */}
+      <div className="text-[11.5px] text-muted mt-1.5 flex items-baseline gap-x-3 gap-y-0.5 flex-wrap">
+        {prevCovered ? <span>Arrows compare with {dayLabel(p.from)} – {dayLabel(p.to)}</span> : <span>No earlier period loaded to compare with</span>}
+        {b.other ? <span>Parking and add-ons {money(b.other)} on top</span> : null}
+        {d.today && range[0] <= t0 && range[1] >= t0 ? <span>Today {pct(d.today.occupancy)} occupied · {d.today.arrivals} arriving · {d.today.departures} leaving</span> : null}
+        <details className="basis-full sm:basis-auto">
+          <summary className="cursor-pointer font-semibold hover:text-ink select-none">How this is counted</summary>
+          <p className="mt-1 max-w-3xl leading-relaxed">{scope === 'all' ? 'Whole property' : scope === 'garden' ? 'Garden rooms only' : 'Botanica rooms only'}: {d.rooms} rooms{d.segments?.blocked ? `, ${d.segments.blocked} of them blocked in Cloudbeds` : ''}.{d.guesty?.bookings ? ` Includes ${d.guesty.bookings} Botanica booking${d.guesty.bookings === 1 ? '' : 's'} from Guesty (${money(d.guesty.revenue)}).` : ''} Rent is the room charge before taxes (Cloudbeds) or the accommodation fare (Guesty). Cleaning is the Guesty cleaning fee and counts in ADR. Parking (Guesty) and add-on items (Cloudbeds) are revenue shown separately, not in ADR. Taxes, and the Guesty revenue, service and marketing fees, are not counted. A stay is counted on the side its room is on, whichever system it was booked in.{d.basis?.gross ? ` ${d.basis.gross.toLocaleString()} Cloudbeds stay${d.basis.gross === 1 ? ' has' : 's have'} no breakdown yet and count${d.basis.gross === 1 ? 's' : ''} at the reservation total.` : ''}</p>
+        </details>
+      </div>
 
       {/* The three sides next to each other, before anything else. */}
       <div className="mt-4">{dd?.ok && dd.split ? <GardenSplit d={dd} scope={scope} onScope={setScope} compact /> : dd && !dd.ok ? null : <p className="text-[12.5px] text-muted inline-flex items-center gap-2 mb-4"><Loader2 size={13} className="animate-spin" /> Comparing Whole property, Garden and Botanica…</p>}</div>
@@ -323,29 +338,13 @@ export function GardenRevenue({ api = '/api/garden/revenue', shared = false, can
 
       {/* The detail, in tabs. */}
       <div className="flex gap-1 mt-5 mb-3 border-b border-line overflow-x-auto">
-        {([['views', 'Views'], ['depth', 'In-depth report'], ['channels', `Channels · ${d.byChannel.length}`], ['bookings', `Bookings · ${(d.bookings || []).length}`], ['ahead', 'Rates ahead'], ['types', `Room types · ${d.types.length}`]] as [Tab, string][]).map(([k, l]) => (
+        {([['views', 'Views'], ['depth', 'In-depth report'], ['bookings', `Bookings · ${(d.bookingsTotal ?? (d.bookings || []).length).toLocaleString()}`], ['ahead', 'Rates ahead']] as [Tab, string][]).map(([k, l]) => (
           <button key={k} onClick={() => pickTab(k)} className={`px-3 py-2 text-[13px] font-semibold whitespace-nowrap -mb-px border-b-2 ${tab === k ? 'border-ink text-ink' : 'border-transparent text-muted hover:text-ink'}`}>{l}</button>
         ))}
       </div>
 
       {tab === 'views' ? <GardenViews api={api} from={range[0]} to={range[1]} scope={scope} fq={fq} data={dd} /> : null}
       {tab === 'depth' ? <GardenDepth api={api} fq={fq} shared={shared} data={dd} splitAbove from={range[0]} to={range[1]} scope={scope} onScope={setScope} /> : null}
-
-      {tab === 'channels' ? (d.byChannel.length ? (
-        <div className="rounded-xl border border-line bg-white overflow-x-auto">
-          <table className="w-full text-[12.5px] tabular-nums">
-            <thead className="text-[10.5px] uppercase tracking-wider text-muted"><tr className="border-b border-line">{[['Channel', ''], ['Share of revenue', ''], ['Revenue', ''], ['Room nights', ''], ['Stays', ''], ['ADR', ''], ['Booked ahead', 'Average days between booking and arrival'], ['Length of stay', 'Average nights'], ['Cancelled', 'Share of this channel\'s bookings cancelled or no-show']].map(([h, t]) => <th key={h} title={t} className={'px-3 py-2 font-semibold ' + (h === 'Channel' || h === 'Share of revenue' ? 'text-left' : 'text-right')}>{h}</th>)}</tr></thead>
-            <tbody>{d.byChannel.map((c: any) => (
-              <tr key={c.channel} className="border-b border-line/60 last:border-0">
-                <td className="px-3 py-2 font-semibold text-ink">{c.channel}</td>
-                <td className="px-3 py-2"><div className="flex items-center gap-2"><div className="w-28 h-1.5 rounded bg-app overflow-hidden"><div className="h-full bg-brand-600" style={{ width: c.share + '%' }} /></div>{c.share}%</div></td>
-                <td className="px-3 py-2 text-right font-semibold">{money(c.revenue)}</td><td className="px-3 py-2 text-right">{c.nights}</td><td className="px-3 py-2 text-right">{c.bookings}</td>
-                <td className="px-3 py-2 text-right">{money(c.adr)}</td><td className="px-3 py-2 text-right">{c.lead == null ? '—' : c.lead + ' days'}</td><td className="px-3 py-2 text-right">{c.los == null ? '—' : c.los + ' nts'}</td><td className="px-3 py-2 text-right">{c.cancelRate}%</td>
-              </tr>))}</tbody>
-          </table>
-          <p className="text-[11.5px] text-muted px-3 py-2 border-t border-line/60">Cloudbeds sells through {d.channels.length} channels; {d.channels.filter((c: any) => c.on).length} are switched on.</p>
-        </div>
-      ) : <LeanEmpty>No stays in this period, so no channel split yet.</LeanEmpty>) : null}
 
       {tab === 'bookings' ? ((d.bookings || []).length ? (<>
         <div className="flex items-center gap-1.5 flex-wrap mb-2">
@@ -394,8 +393,8 @@ export function GardenRevenue({ api = '/api/garden/revenue', shared = false, can
         ) : <LeanEmpty>No rates mirrored yet — they fill in on the next Cloudbeds sync.</LeanEmpty>}
       </>) : null}
 
-      {tab === 'types' ? (
-        <div className="rounded-xl border border-line bg-white overflow-x-auto max-h-[520px] overflow-y-auto">
+      {tab === 'ahead' && d.types.length ? (
+        <div className="rounded-xl border border-line bg-white overflow-x-auto max-h-[520px] overflow-y-auto mt-3">
           <table className="w-full text-[12.5px] tabular-nums">
             <thead className="text-[10.5px] uppercase tracking-wider text-muted sticky top-0 bg-white"><tr className="border-b border-line">{['Room type', 'Rooms', 'Lowest rate', 'Average', 'Highest', 'Min stay', 'Days closed'].map(h => <th key={h} className={'px-3 py-2 font-semibold ' + (h === 'Room type' ? 'text-left' : 'text-right')}>{h}</th>)}</tr></thead>
             <tbody>{d.types.map((t: any) => (
