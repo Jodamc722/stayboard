@@ -49,6 +49,10 @@
       "schedule": "3 4,16 * * *"
     },
     {
+      "path": "/api/cron/listing-watch",
+      "schedule": "7 14 * * *"
+    },
+    {
       "path": "/api/cron/sync-reviews",
       "schedule": "26 3,9,15,21 * * *"
     },

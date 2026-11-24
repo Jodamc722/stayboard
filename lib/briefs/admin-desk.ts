@@ -199,6 +199,9 @@ export async function buildAdminBrief(): Promise<{ subject: string; html: string
   const strongRem = rem.list.filter(f => f.strong)
   const names = (xs: string[], n = 5) => `${xs.slice(0, n).map(x => esc(unitShort(x))).join(' · ')}${xs.length > n ? ` · +${xs.length - n} more` : ''}`
   const top: Line[] = []
+  // NO CLEANING FEE (Jon, 2026-11-24: "that should be red urgent"): first, whenever there is one.
+  const noFee = work.filter(w => w.kind === 'fee')
+  if (noFee.length) top.push({ tone: 'red', html: `<b>${plural(noFee.length, 'property', 'properties')} with no cleaning fee</b>`, sub: `${names(noFee.map(w => w.name))} · ${link('Admin desk', '/admin')}` })
   if (newChan.length) top.push({ tone: 'red', html: `<b>${plural(newChan.length, 'listing')} stopped selling on a channel in the last two days</b>`, sub: `${names(newChan.map(w => `${w.name} (${str(w.title).split(' — ')[0]})`))} · ${link('Channels', '/channels?problems=1')}` })
   if (lowOwed.length) top.push({ tone: 'red', html: `<b>${plural(owedLow, 'low review')} waiting for a reply</b>`, sub: `${names(lowOwed.map(r => r.name))} · ${link('Reviews', '/reviews')}` })
   if (strongRem.length) top.push({ tone: 'red', html: `<b>${plural(strongRem.length, 'review')} worth a removal request today</b>`, sub: `${names(strongRem.map(f => f.unit))} · details below` })
@@ -246,6 +249,7 @@ export async function buildAdminBrief(): Promise<{ subject: string; html: string
   // Do first: at most five, each one sentence and one link.
   const todo: string[] = []
   const a = (label: string, path: string) => `<a href="${APP_URL}${path}" style="color:#6F5527;text-decoration:none;font-weight:600">${esc(label)}</a>`
+  if (noFee.length) todo.push(`<b>Set a cleaning fee on ${few(noFee.map(w => w.name))}.</b> Guests are charged nothing for the clean until it is set. ${a('Admin desk', '/admin')}`)
   if (newChan.length) {
     const byTitle = new Map<string, number>()
     for (const w of newChan) byTitle.set(str(w.title), (byTitle.get(str(w.title)) || 0) + 1)

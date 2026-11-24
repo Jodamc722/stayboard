@@ -23,16 +23,19 @@ import { supabaseAdmin } from './supabase-admin'
 import { buildChannelHealth, readSnapshot } from './channel-health'
 import { CHANNELS_CACHE_TAG } from './channel-check'
 import { CHANNELS } from './channel-types'
-import { computeScore, lastOptimizedOf, rollupBuilding } from './optimize-score'
+import { computeScore, lastOptimizedOf, rollupBuilding, buildingSlug } from './optimize-score'
+import { getSettingFresh } from './app-settings'
 import { marketOf } from './segments'
 import { isLowReview } from './review-scale'
 import { isJunkCaption } from './photo-order'
 import { pageRows } from './db-page'
-import { RULES, isCombined, unitToken, type AdminRow, type ChannelCellLite } from './admin-desk-shared'
+import { RULES, isCombined, unitToken, cleaningFeeOf, type AdminRow, type ChannelCellLite } from './admin-desk-shared'
 import { otaLinksFrom } from './ota-links'
 import { getTiers, tierOfListing } from './property-tier'
 
 export const ADMIN_DESK_CACHE_TAG = 'admin-desk'
+/** app_settings: { [listingId]: { by, at } } — listings with no cleaning fee on purpose. */
+export const FEE_EXEMPT_KEY = 'cleaning_fee_exempt'
 
 const str = (v: any) => (v == null ? '' : String(v)).trim()
 const ymd = (d: Date) => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(d)
@@ -73,7 +76,7 @@ async function assemble(): Promise<AdminDesk> {
   const listings: any[] = []
   for (let from = 0; from < 5000; from += 1000) {
     const { data, error } = await sb.from('guesty_listings')
-      .select('id, title, nickname, building, unit, status, address_city, amenities, pictures, last_optimized, photo_score, lastOpt:raw->>_lastOptimized, pics:raw->pictures, pidx:raw->_photoIndex, rawPub:raw->publicDescription, rawPubs:raw->publicDescriptions, rawTerms:raw->terms, rawPrices:raw->prices, rawInts:raw->integrations, rawIb:raw->instantBookable, rawIb2:raw->instantBook, rawCi:raw->>defaultCheckInTime, rawCi2:raw->>checkInTime, rawCo:raw->>defaultCheckOutTime, rawCo2:raw->>checkOutTime, rawPs:raw->_photoScore, rawCp:raw->>cancellationPolicy, rawAirbnb:raw->airbnb, rawBcom:raw->bookingcom, rawTitle:raw->>title, rawMinN:raw->defaultListingMinNights, rawAmen:raw->amenities')
+      .select('id, title, nickname, building, unit, status, address_city, amenities, pictures, last_optimized, photo_score, lastOpt:raw->>_lastOptimized, pics:raw->pictures, pidx:raw->_photoIndex, rawPub:raw->publicDescription, rawPubs:raw->publicDescriptions, rawTerms:raw->terms, rawPrices:raw->prices, rawFinFee:raw->financials->cleaningFee, rawListed:raw->>isListed, rawInts:raw->integrations, rawIb:raw->instantBookable, rawIb2:raw->instantBook, rawCi:raw->>defaultCheckInTime, rawCi2:raw->>checkInTime, rawCo:raw->>defaultCheckOutTime, rawCo2:raw->>checkOutTime, rawPs:raw->_photoScore, rawCp:raw->>cancellationPolicy, rawAirbnb:raw->airbnb, rawBcom:raw->bookingcom, rawTitle:raw->>title, rawMinN:raw->defaultListingMinNights, rawAmen:raw->amenities')
       .order('id').range(from, from + 999)
     if (error) throw new Error('guesty_listings: ' + error.message)
     listings.push(...(data || []))
@@ -209,6 +212,9 @@ async function assemble(): Promise<AdminDesk> {
     }
   }
 
+  // Listings a person marked "no cleaning fee on purpose" (the Not needed button on the desk).
+  const feeExempt = await getSettingFresh<Record<string, any>>(FEE_EXEMPT_KEY, {}).catch(() => ({} as Record<string, any>)) || {}
+
   const rows: AdminRow[] = listings.map((l: any) => {
     const id = str(l.id)
     const name = str(l.nickname) || str(l.title) || id
@@ -236,6 +242,10 @@ async function assemble(): Promise<AdminDesk> {
       channels, verdict: h ? h.verdict : 'missing',
       links: (() => { const m: Record<string, string> = {}; const key: Record<string, string> = { Airbnb: 'airbnb2', Vrbo: 'homeaway2', 'Booking.com': 'bookingCom', Expedia: 'expedia' }; for (const o of otaLinksFrom({ integrations: l.rawInts })) if (key[o.name]) m[key[o.name]] = o.url; return m })(),
       score,
+      cleaningFee: cleaningFeeOf(l.rawPrices, l.rawFinFee),
+      ...(feeExempt[id] ? { feeExempt: true } : {}),
+      listed: str(l.rawListed) !== 'false',
+      buildingSlug: buildingSlug(building),
       lastOptimized: lastOptimizedOf(slim).at,
       photos: { count: caps.count || (Array.isArray(l.pictures) ? l.pictures.length : 0), noCaption: caps.noCaption, analyzedAt: ps && ps.at ? str(ps.at) : null, photoScore: ps && Number.isFinite(Number(ps.score)) ? Number(ps.score) : null },
       reviews: { avg, count: rv ? rv.n : 0, owed: rv ? rv.owed : 0, owedLow: rv ? rv.owedLow : 0, low30: rv ? rv.low30 : 0, last: rv ? rv.last : null },

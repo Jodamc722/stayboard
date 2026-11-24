@@ -220,6 +220,10 @@ export const AUTOMATIONS: AutomationDef[] = [
     what: 'Every 15 minutes: reads new posts in #vr-hkdamagereports, groups each line of text with its photos, works out the unit, what was found and the guest who just checked out, and puts it in the HK damage reports queue on the Claims board (Autofill claim / Not claimable) with a bell to whoever runs claims. Plain maintenance with no photos is filed straight to Handled.', receipt: 'automation_runs',
     notes: 'lib/hk-damage.ts. Photos need the Slack files:read permission.' },
   // ---- Ops ------------------------------------------------------------------------------------
+  { key: 'listing-watch', label: 'Listing watch — no cleaning fee, offline on Airbnb', area: 'ops', path: '/api/cron/listing-watch',
+    what: 'Eve tells the leadership room which active properties have no cleaning fee in Guesty and which listings Airbnb is not selling (page removed, suspended, failed or disconnected). A listing is announced the first time it is seen, and both lists are repeated once each morning (about 9 am ET) while anything is on them; nothing is said when both are empty. Also runs after each listings sync.',
+    receipt: 'automation_runs',
+    notes: 'lib/listing-watch.ts. Two Slack events, each with its own switch in Users → Slack alerts: Property with no cleaning fee, Listing offline on Airbnb. The same lists are on the Listing desk in red.' },
   { key: 'mail-review', label: 'Email review', area: 'ops', path: '/api/cron/mail-review',
     what: 'Every 10 minutes: reads mail forwarded, copied or bcc\'d to jon+review@stay-hospitality.com with its attachments, and answers Jon only, in the same conversation: what the email is, what each document is, and the steps needed. Nobody else on the email is answered.',
     configKey: 'mail_review', enabledPath: 'on', defaultOn: false, receipt: 'automation_runs',

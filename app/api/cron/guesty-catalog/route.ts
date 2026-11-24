@@ -10,6 +10,8 @@ import { runFullSync } from '@/lib/guesty'
 import { requireCron, tooSoon } from '@/lib/cron-auth'
 import { recordRun } from '@/lib/automation-runs'
 import { runChannelCheck } from '@/lib/channel-check'
+import { runListingWatch } from '@/lib/listing-watch'
+import { buildChannelHealth, type ChannelHealth } from '@/lib/channel-health'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 120
@@ -29,8 +31,18 @@ export async function GET(req: NextRequest) {
   // the listings were just re-pulled, so this is the one moment a comparison with the last snapshot
   // can find anything. Never allowed to fail the sync.
   let channels: any = 'skipped — the listings did not sync, so there is nothing new to compare'
+  // Built once and handed to both checks below: it is the slowest read of the two.
+  let health: ChannelHealth | undefined
   if (result.listings > 0 || result.errors.length === 0) {
-    channels = await runChannelCheck().catch((e: any) => ({ ok: false, error: String(e?.message || e).slice(0, 200) }))
+    health = await buildChannelHealth().catch(() => undefined)
+    channels = await runChannelCheck(health ? { health } : undefined).catch((e: any) => ({ ok: false, error: String(e?.message || e).slice(0, 200) }))
   }
-  return NextResponse.json({ ok: true, scope: 'catalog', elapsed_ms: Date.now() - started, ...result, channels })
+  // THE LISTING WATCH RIDES ON IT TOO (Jon, 2026-11-24): a cleaning fee or an Airbnb connection can only
+  // have changed in what this sync just wrote. Here it speaks only about a listing that is new to a
+  // list; the daily reminder is its own morning run (app/api/cron/listing-watch). Never fails the sync.
+  let watch: any = 'skipped'
+  if (result.listings > 0 || result.errors.length === 0) {
+    watch = await runListingWatch({ by: 'guesty-catalog', health }).catch((e: any) => ({ ok: false, error: String(e?.message || e).slice(0, 200) }))
+  }
+  return NextResponse.json({ ok: true, scope: 'catalog', elapsed_ms: Date.now() - started, ...result, channels, watch })
 }

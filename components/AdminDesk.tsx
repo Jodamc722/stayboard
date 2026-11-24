@@ -21,7 +21,7 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
-import { ExternalLink, Home, Images, MessageSquareText, Radio, RefreshCw, Search, Wrench, ArrowUpRight, ArrowDownRight, Minus, Sparkles } from 'lucide-react'
+import { ExternalLink, Home, Images, MessageSquareText, Radio, RefreshCw, Search, Wrench, ArrowUpRight, ArrowDownRight, Minus, Sparkles, CircleDollarSign } from 'lucide-react'
 import { useCachedFetch, invalidateCache } from '@/lib/swr'
 import { GuidebookWalk } from '@/components/GuidebookWalk'
 import { ChannelConnections } from '@/components/ChannelConnections'
@@ -29,7 +29,7 @@ import { LeanHead, Pill, Tag, LeanTabs, LeanSection, LeanList, LeanRow, LeanEmpt
 import { TILES, tileCounts, rowInTile, worklist, channelCounts, rowWeight, optimizeState, photoFlags, performance, coverVerdict, agoShort, RULES, channelLabel, type AdminRow, type TileKey, type WorkItem, type Severity } from '@/lib/admin-desk-shared'
 import { VERDICT_LABEL, type CellVerdict } from '@/lib/channel-types'
 import { tierRank } from '@/lib/signal'
-import { isMajorChannel } from '@/lib/admin-desk-shared'
+import { isMajorChannel, noCleaningFee } from '@/lib/admin-desk-shared'
 import { CopyAuditTab } from '@/components/CopyAuditTab'
 import { AdminBaseRates } from '@/components/AdminBaseRates'
 
@@ -42,9 +42,9 @@ const SEV_TONE: Record<Severity, Tone> = { high: 'rose', medium: 'amber', low: '
 const SEV_WORD: Record<Severity, string> = { high: 'Now', medium: 'This week', low: 'When you can' }
 const VERDICT_TONE: Record<CellVerdict, Tone> = { delisted: 'roseSolid', suspended: 'roseSolid', failed: 'rose', disconnected: 'rose', missing: 'amber', unknown: 'amber', stale: 'sky', live: 'emerald' }
 const CH_SHORT: Record<string, string> = { airbnb2: 'A', bookingCom: 'B', homeaway2: 'V', expedia: 'E', googleVacationRentals: 'G', hopper: 'H', bluegroundNestpick: 'Bg', whimstay: 'W', homesVillasByMarriott: 'M' }
-const KIND_ICON: Record<WorkItem['kind'], any> = { channel: Radio, reply: MessageSquareText, refresh: Sparkles, optimize: Wrench, photos: Images, blocked: Home }
-const KIND_WORD: Record<WorkItem['kind'], string> = { channel: 'Channel', reply: 'Reviews', refresh: 'Refresh', optimize: 'Optimize', photos: 'Photos', blocked: 'Blocked' }
-const KIND_HINT: Record<WorkItem['kind'], string> = { channel: 'A channel problem', reply: 'A review to answer', refresh: 'Performing poorly against its building — new cover, re-order, re-optimize', optimize: 'Listing copy, settings or score', photos: 'Photos, captions or the analysis', blocked: 'The Guesty calendar' }
+const KIND_ICON: Record<WorkItem['kind'], any> = { channel: Radio, fee: CircleDollarSign, reply: MessageSquareText, refresh: Sparkles, optimize: Wrench, photos: Images, blocked: Home }
+const KIND_WORD: Record<WorkItem['kind'], string> = { channel: 'Channel', fee: 'Cleaning fee', reply: 'Reviews', refresh: 'Refresh', optimize: 'Optimize', photos: 'Photos', blocked: 'Blocked' }
+const KIND_HINT: Record<WorkItem['kind'], string> = { channel: 'A channel problem', fee: 'No cleaning fee on the listing in Guesty', reply: 'A review to answer', refresh: 'Performing poorly against its building — new cover, re-order, re-optimize', optimize: 'Listing copy, settings or score', photos: 'Photos, captions or the analysis', blocked: 'The Guesty calendar' }
 const ADMIN_PROJECT_CATEGORIES = ['onboarding', 'offboarding', 'rollout']
 // One name per thing on this page and in the morning email: "stopped selling", not also "not for sale".
 const TILE_LABEL: Partial<Record<TileKey, string>> = { notForSale: 'Stopped selling' }
@@ -119,6 +119,11 @@ export function AdminDesk({ canEdit }: { canEdit: boolean }) {
   const adminProjects = useMemo(() => (projects.data?.projects || []).filter((p: any) => ADMIN_PROJECT_CATEGORIES.indexOf(String(p.category || '').toLowerCase()) >= 0 && !p.archived && p.stage !== 'done' && p.stage !== 'cancelled'), [projects.data])
 
   const openTile = (k: TileKey) => { setTile(k); setTab('listings', k) }
+  // "Not needed": this listing has no cleaning fee on purpose. It leaves the red list and Eve stops naming it.
+  const exemptFee = async (id: string, on = true) => {
+    await fetch(DESK_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ op: 'fee-exempt', id, on }) }).catch(() => null)
+    invalidateCache(DESK_URL); await desk.refresh()
+  }
   const refresh = async () => {
     setRefreshing(true)
     try { await fetch(DESK_URL + '?refresh=1', { cache: 'no-store' }); invalidateCache(DESK_URL); await desk.refresh() } finally { setRefreshing(false) }
@@ -132,6 +137,8 @@ export function AdminDesk({ canEdit }: { canEdit: boolean }) {
             tiles below; they are standing work, so they stay on the tiles only. Nothing is printed
             before the rows arrive (it read "0 not for sale" in green while loading). */}
         {desk.data && <Pill tone={counts.notForSale ? 'rose' : 'emerald'} title="Was selling on Airbnb, Booking.com, Vrbo or Expedia and stopped: page removed, suspended, failed or disconnected. Each one is lost bookings." onClick={() => openTile('notForSale')}>{counts.notForSale} stopped selling</Pill>}
+        {/* NO CLEANING FEE (Jon, 2026-11-24: "that should be red urgent"). Only drawn when there is one. */}
+        {desk.data && counts.noCleaningFee > 0 && <Pill tone="rose" title={TILES.find(t => t.key === 'noCleaningFee')!.hint} onClick={() => openTile('noCleaningFee')}>{counts.noCleaningFee} no cleaning fee</Pill>}
         {desk.data && counts.replyOwed > 0 && <Pill tone="amber" title={TILES.find(t => t.key === 'replyOwed')!.hint} onClick={() => openTile('replyOwed')}>{counts.replyOwed} reply owed</Pill>}
         {canEdit && <IconBtn title={refreshing ? 'Rebuilding…' : 'Rebuild the desk now (otherwise every 5 minutes)'} onClick={refresh} disabled={refreshing}><RefreshCw size={14} className={refreshing ? 'animate-spin' : ''} /></IconBtn>}
       </LeanHead>
@@ -147,7 +154,7 @@ export function AdminDesk({ canEdit }: { canEdit: boolean }) {
       ]} />
 
       {tab === 'desk' && (
-        <DeskTab work={work} rows={rows} counts={counts} strip={strip} offline={offline} projects={adminProjects} projectsLoading={projects.loading} loading={desk.loading && !desk.data} blockedState={blocked.error ? 'error' : blocked.data ? 'ok' : 'loading'} onTile={openTile} onChannels={() => setTab('channels')} channelCheckedAt={desk.data?.channelCheckedAt || null} />
+        <DeskTab work={work} rows={rows} counts={counts} strip={strip} offline={offline} projects={adminProjects} projectsLoading={projects.loading} loading={desk.loading && !desk.data} blockedState={blocked.error ? 'error' : blocked.data ? 'ok' : 'loading'} onTile={openTile} onChannels={() => setTab('channels')} channelCheckedAt={desk.data?.channelCheckedAt || null} onExemptFee={canEdit ? exemptFee : undefined} />
       )}
       {tab === 'listings' && (
         <ListingsTab rows={rows} today={today} tile={tile} setTile={setTile} counts={counts} channels={(desk.data?.channels || []).filter(c => c.major || c.key === 'googleVacationRentals')} loading={desk.loading && !desk.data} />
@@ -168,10 +175,15 @@ export function AdminDesk({ canEdit }: { canEdit: boolean }) {
 // each one is lost bookings today; the ones that were booking there come first. Then the per-channel
 // picture (where "not connected" is the standing gap, in plain text), then the rest of the work, and
 // only then the twelve counts. The order used to be: counts, one long list, channels.
-function DeskTab({ work, rows, counts, strip, offline, projects, projectsLoading, loading, blockedState, onTile, onChannels, channelCheckedAt }: {
+function DeskTab({ work, rows, counts, strip, offline, projects, projectsLoading, loading, blockedState, onTile, onChannels, channelCheckedAt, onExemptFee }: {
   work: WorkItem[]; rows: AdminRow[]; counts: Record<TileKey, number>; strip: ReturnType<typeof channelCounts>; offline: AdminRow[]
-  projects: any[]; projectsLoading: boolean; loading: boolean; blockedState: 'ok' | 'loading' | 'error'; onTile: (k: TileKey) => void; onChannels: () => void; channelCheckedAt: string | null
+  projects: any[]; projectsLoading: boolean; loading: boolean; blockedState: 'ok' | 'loading' | 'error'; onTile: (k: TileKey) => void; onChannels: () => void; channelCheckedAt: string | null; onExemptFee?: (id: string, on?: boolean) => Promise<void>
 }) {
+  const [exempting, setExempting] = useState('')
+  const noFee = useMemo(() => { const byId = new Map(rows.map(r => [r.id, r])); return work.filter(w => w.kind === 'fee').map(w => ({ w, r: byId.get(w.listingId) })) }, [work, rows])
+  // Marked "not needed" and still without a fee: named under the list, so a wrong click can be undone.
+  const feeExcused = useMemo(() => rows.filter(r => r.active && r.feeExempt && !(Number(r.cleaningFee) > 0)), [rows])
+  const setExempt = async (id: string, on: boolean) => { if (!onExemptFee) return; setExempting(id); try { await onExemptFee(id, on) } finally { setExempting('') } }
   const [all, setAll] = useState(false)
   const [allStopped, setAllStopped] = useState(false)
   // STOPPED SELLING, ranked by what is being lost: bookings that channel sent this listing in the last
@@ -192,11 +204,39 @@ function DeskTab({ work, rows, counts, strip, offline, projects, projectsLoading
   const stoppedShown = allStopped ? stopped : stopped.slice(0, 30)
   // The rest of the work. "Not connected" lines are not in it: a channel that was never set up is a
   // standing gap the Channels section counts, not forty amber lines ahead of a review reply.
-  const rest = useMemo(() => work.filter(w => !isStopped(w) && !isChannelGap(w)), [work])
+  const rest = useMemo(() => work.filter(w => !isStopped(w) && !isChannelGap(w) && w.kind !== 'fee'), [work])
   const shown = all ? rest : rest.slice(0, 25)
   const nSev = (sv: Severity) => rest.filter(w => w.severity === sv).length
   return (
     <div className="space-y-5">
+      {/* NO CLEANING FEE (Jon, 2026-11-24: "catch properties without a cleaning fee. That should be red
+          urgent"). First on the desk, and only there when a listing has none: every booking made while
+          the fee is empty loses it. Eve names the same listings in the leadership room. */}
+      {!loading && (noFee.length > 0 || feeExcused.length > 0) && (
+        <LeanSection title="No cleaning fee" n={noFee.length} tone={noFee.length ? 'rose' : undefined} right={<span className="text-[11px] text-muted">guests are charged nothing for the clean</span>}>
+          {noFee.length > 0 && <LeanList>
+            {noFee.map(({ w, r }) => (
+              <LeanRow key={'fee:' + w.listingId} tint="rose"
+                lead={<Link href={w.href} className={btn} title={w.why}>{w.verb}</Link>}
+                name={w.name} meta={<>{w.building}{r && r.listed === false ? ' · not listed yet' : ''}</>}
+                tags={<Tag tone="roseSolid" title={w.why}>Urgent</Tag>}
+                actions={<>
+                  {onExemptFee ? <button className={ghost} disabled={!!exempting} title="This listing has no cleaning fee on purpose: take it off this list and out of Eve's Slack message" onClick={() => setExempt(w.listingId, true)}>{exempting === w.listingId ? 'Saving…' : 'Not needed'}</button> : null}
+                  <IconBtn title="Open the listing in Guesty (Pricing holds the cleaning fee)" href={'https://app.guesty.com/properties/' + encodeURIComponent(w.listingId)}><ExternalLink size={14} /></IconBtn>
+                  <IconBtn title="Open the unit page" href={'/listings/' + encodeURIComponent(w.listingId)}><Home size={14} /></IconBtn>
+                </>}>
+                <p className="text-[12.5px] text-ink/85">{w.why}.</p>
+              </LeanRow>
+            ))}
+          </LeanList>}
+          {feeExcused.length > 0 && (
+            <p className="mt-1.5 px-1 text-[11.5px] text-muted">No fee on purpose: {feeExcused.map((r, i) => (
+              <span key={r.id}>{i ? ' · ' : ''}{r.name}{onExemptFee ? <> <button className="font-semibold text-ink hover:underline disabled:opacity-50" disabled={!!exempting} title="Put this listing back on the red list" onClick={() => setExempt(r.id, false)}>undo</button></> : null}</span>
+            ))}</p>
+          )}
+        </LeanSection>
+      )}
+
       {/* STOPPED SELLING */}
       <LeanSection title="Stopped selling" n={loading ? undefined : counts.notForSale} tone={stopped.length ? 'rose' : undefined}
         right={stopped.length ? <span className="text-[11px] text-muted">{stopped.length !== counts.notForSale ? stopped.length + ' channel connections on ' + counts.notForSale + ' listings · ' : ''}most bookings lost first</span> : undefined}>
@@ -271,7 +311,7 @@ function DeskTab({ work, rows, counts, strip, offline, projects, projectsLoading
           {TILES.map(t => {
             const n = counts[t.key]
             const pending = loading || (t.key === 'blocked' && blockedState !== 'ok')
-            const tone = n === 0 ? 'text-muted/60' : t.key === 'notForSale' ? 'text-rose-700' : (t.key === 'replyOwed' || t.key === 'lowReviews') ? 'text-amber-800' : 'text-ink'
+            const tone = n === 0 ? 'text-muted/60' : (t.key === 'notForSale' || t.key === 'noCleaningFee') ? 'text-rose-700' : (t.key === 'replyOwed' || t.key === 'lowReviews') ? 'text-amber-800' : 'text-ink'
             return (
               <button key={t.key} onClick={() => onTile(t.key)} title={t.hint + (t.key === 'blocked' && blockedState !== 'ok' ? (blockedState === 'error' ? ' — the calendar could not be read' : ' — reading the calendar…') : '') + ' — click to see these listings'}
                 className="text-left rounded-xl border border-line bg-white px-2.5 py-2 min-w-0 hover:border-ink/30 transition">
@@ -389,9 +429,11 @@ function ListingRow({ r, today, channels }: { r: AdminRow; today: string; channe
   const items = useMemo(() => worklist([r], today), [r, today])
   const unitHref = '/listings/' + encodeURIComponent(r.id)
   return (
-    <LeanRow name={r.name} meta={<>{r.building} · {r.market}</>} tint={!r.active ? undefined : r.verdict === 'delisted' || r.verdict === 'suspended' || r.verdict === 'failed' || r.verdict === 'disconnected' ? 'rose' : undefined}
+    <LeanRow name={r.name} meta={<>{r.building} · {r.market}</>} tint={!r.active ? undefined : noCleaningFee(r) || r.verdict === 'delisted' || r.verdict === 'suspended' || r.verdict === 'failed' || r.verdict === 'disconnected' ? 'rose' : undefined}
       tags={<>
         {!r.active && <Tag tone="slate" title={'Guesty status: ' + r.guestyStatus}>offline · {r.guestyStatus}</Tag>}
+        {noCleaningFee(r) && <Tag tone="roseSolid" title="Guesty holds no cleaning fee for this listing: guests are charged nothing for the clean">no cleaning fee</Tag>}
+        {r.active && r.feeExempt && !(Number(r.cleaningFee) > 0) && <Tag tone="slate" title="Marked as having no cleaning fee on purpose (Not needed on the Desk)">no cleaning fee · on purpose</Tag>}
         {r.active && channels.map(c => {
           const cell = r.channels[c.key]; if (!cell) return null
           const title = c.label + ': ' + VERDICT_LABEL[cell.verdict]

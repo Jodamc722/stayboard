@@ -83,11 +83,19 @@ export type AdminRow = {
   perf?: { bookings90: number; occ90: number | null; revparIndex: number | null; peers: number; combined?: boolean } | null
   /** The cover (first photo) as the photo analysis saw it; null when the analysis has not seen it. */
   cover?: { quality: number | null; kind: string | null; shotType: string | null; category: string | null } | null
+  /** What the guest pays for the clean (Guesty prices.cleaningFee, else the fee in its financials); null when none is set. */
+  cleaningFee?: number | null
+  /** A person marked this listing as having no cleaning fee on purpose: it is not flagged or announced. */
+  feeExempt?: boolean
+  /** Guesty's "listed" switch. An unlisted listing is still flagged for a missing fee, and says so. */
+  listed?: boolean
+  /** /buildings/<slug>, where the bulk editor sets the fee for the building. */
+  buildingSlug?: string
   /** Filled in by the page from /api/blocked-units; null until then or when the unit is open. */
   blocked?: { nights: number; reason: string; openEnded: boolean; from: string; linked: boolean } | null
 }
 
-export type WorkKind = 'channel' | 'reply' | 'refresh' | 'optimize' | 'photos' | 'blocked'
+export type WorkKind = 'channel' | 'fee' | 'reply' | 'refresh' | 'optimize' | 'photos' | 'blocked'
 export type WorkItem = {
   kind: WorkKind
   severity: Severity
@@ -118,6 +126,29 @@ const plural = (n: number, w: string) => n + ' ' + w + (n === 1 ? '' : 's')
 const LABEL: Record<string, string> = { airbnb2: 'Airbnb', bookingCom: 'Booking.com', homeaway2: 'Vrbo', expedia: 'Expedia', googleVacationRentals: 'Google VR', hopper: 'Hopper', bluegroundNestpick: 'Blueground', whimstay: 'Whimstay', homesVillasByMarriott: 'Marriott HVMI' }
 const VERDICT_WORD: Record<string, string> = { delisted: 'page removed', suspended: 'suspended', failed: 'failed', disconnected: 'disconnected', missing: 'not connected', unknown: 'unknown', stale: 'no bookings', live: 'live' }
 export const channelLabel = (k: string) => LABEL[k] || k
+
+// ── No cleaning fee · offline on Airbnb (Jon, 2026-11-24) ───────────────────────────────────────
+// "In the admin dashboard, please have or catch properties without a cleaning fee. That should be red
+// urgent, and … have Eve message us in Slack in the leadership chat." And: "have Eve send in the
+// leadership chat any listings that are offline from Airbnb in particular."
+/** Jon's own test listing ("! Jon's Unit") and anything else named with a leading "!" is never flagged. */
+export const isTestListing = (name: string) => /^\s*!/.test(String(name || ''))
+/** The guest-paid cleaning fee from what Guesty holds: prices.cleaningFee, else financials.cleaningFee. null = none. */
+export function cleaningFeeOf(prices: any, financialFee?: any): number | null {
+  const a = Number(prices && typeof prices === 'object' ? prices.cleaningFee : NaN)
+  if (Number.isFinite(a) && a > 0) return a
+  const b = Number(financialFee && typeof financialFee === 'object' ? (financialFee.value && typeof financialFee.value === 'object' ? financialFee.value.formula : financialFee.value) : NaN)
+  return Number.isFinite(b) && b > 0 ? b : null
+}
+/** Active in Guesty, not a test listing, not excused, and the guest is charged nothing for the clean. */
+export function noCleaningFee(r: Pick<AdminRow, 'active' | 'name' | 'cleaningFee' | 'feeExempt'>): boolean {
+  return r.active && !isTestListing(r.name) && !r.feeExempt && r.cleaningFee !== undefined && !(Number(r.cleaningFee) > 0)
+}
+/** Active, and Airbnb is not selling it: the page is gone, or it is suspended, failed or disconnected. Never-connected is not "offline". */
+export function airbnbOffline(r: Pick<AdminRow, 'active' | 'name' | 'channels'>): boolean {
+  const c = r.channels && r.channels.airbnb2
+  return r.active && !isTestListing(r.name) && !!c && NOT_FOR_SALE.indexOf(c.verdict) >= 0
+}
 
 // ── Dates ───────────────────────────────────────────────────────────────────────────────────────
 /** Whole days from an ISO stamp (or Y-M-D) to `today` (Y-M-D); null when there is no date. */
@@ -223,10 +254,11 @@ export function refreshSteps(r: AdminRow, today: string): string[] {
 }
 
 // ── The tiles. Each key is a rule; rowInTile() is the ONLY test, used both to count and to filter. ─
-export type TileKey = 'all' | 'liveAll' | 'notForSale' | 'notConnected' | 'offline' | 'replyOwed' | 'lowReviews' | 'refresh' | 'neverOptimized' | 'staleOptimized' | 'captions' | 'unanalyzed' | 'blocked'
+export type TileKey = 'all' | 'liveAll' | 'notForSale' | 'noCleaningFee' | 'notConnected' | 'offline' | 'replyOwed' | 'lowReviews' | 'refresh' | 'neverOptimized' | 'staleOptimized' | 'captions' | 'unanalyzed' | 'blocked'
 export const TILES: { key: TileKey; label: string; hint: string }[] = [
   { key: 'liveAll', label: 'Live everywhere', hint: 'Active in Guesty and live (or simply quiet) on every major channel: Airbnb, Booking.com, Vrbo, Expedia' },
   { key: 'notForSale', label: 'Not for sale', hint: 'Active in Guesty but suspended, failed or disconnected on a major channel — the listing exists there and is not selling' },
+  { key: 'noCleaningFee', label: 'No cleaning fee', hint: 'Active in Guesty with no cleaning fee: guests are charged nothing for the clean on every booking made while it is empty' },
   { key: 'notConnected', label: 'Not connected', hint: 'Active in Guesty with no integration at all on a major channel' },
   { key: 'offline', label: 'Offline in Guesty', hint: 'Not active in Guesty (inactive, archived, …) — off every channel' },
   { key: 'replyOwed', label: 'Reply owed', hint: `Reviews from the last ${RULES.replyWindowDays} days with no reply and not dismissed` },
@@ -243,6 +275,7 @@ export function rowInTile(r: AdminRow, tile: TileKey, today: string): boolean {
     case 'all': return true
     case 'liveAll': return r.active && !MAJORS.some(k => r.channels[k] && PROBLEM.indexOf(r.channels[k].verdict) >= 0)
     case 'notForSale': return r.active && MAJORS.some(k => r.channels[k] && NOT_FOR_SALE.indexOf(r.channels[k].verdict) >= 0)
+    case 'noCleaningFee': return noCleaningFee(r)
     case 'notConnected': return r.active && MAJORS.some(k => r.channels[k] && r.channels[k].verdict === 'missing')
     case 'offline': return !r.active
     case 'replyOwed': return r.active && r.reviews.owed > 0
@@ -258,7 +291,7 @@ export function rowInTile(r: AdminRow, tile: TileKey, today: string): boolean {
 }
 export function tileCounts(rows: AdminRow[], today: string): Record<TileKey, number> {
   const out = {} as Record<TileKey, number>
-  const keys: TileKey[] = ['all', 'liveAll', 'notForSale', 'notConnected', 'offline', 'replyOwed', 'lowReviews', 'refresh', 'neverOptimized', 'staleOptimized', 'captions', 'unanalyzed', 'blocked']
+  const keys: TileKey[] = ['all', 'liveAll', 'notForSale', 'noCleaningFee', 'notConnected', 'offline', 'replyOwed', 'lowReviews', 'refresh', 'neverOptimized', 'staleOptimized', 'captions', 'unanalyzed', 'blocked']
   for (const k of keys) out[k] = rows.filter(r => rowInTile(r, k, today)).length
   return out
 }
@@ -280,7 +313,7 @@ export function channelCounts(rows: AdminRow[], keys: string[]): ChannelCount[] 
 // ── Do now ──────────────────────────────────────────────────────────────────────────────────────
 const SEV_RANK: Record<Severity, number> = { high: 0, medium: 1, low: 2 }
 /** Within one severity: money first (a listing not for sale), then the reply clock, then the refresh, then the rest. */
-const KIND_RANK: Record<WorkKind, number> = { channel: 0, reply: 1, refresh: 2, blocked: 3, optimize: 4, photos: 5 }
+const KIND_RANK: Record<WorkKind, number> = { channel: 0, fee: 1, reply: 2, refresh: 3, blocked: 4, optimize: 5, photos: 6 }
 
 /**
  * Every line the administrator should act on, worst first. Channel trouble leads (a listing that is
@@ -321,6 +354,14 @@ export function worklist(rows: AdminRow[], today: string): WorkItem[] {
         title: channelLabel(k) + ' — ' + VERDICT_WORD[c.verdict],
         why: detail + sinceTxt + (c.lastBookingAt ? ' · last booking ' + String(c.lastBookingAt).slice(0, 10) : ''),
         verb: 'Check', href: '/channels?listing=' + encodeURIComponent(r.id) + '&problems=1',
+      })
+    }
+    if (noCleaningFee(r)) {
+      out.push({
+        ...base, kind: 'fee', severity: 'high',
+        title: 'No cleaning fee' + (r.listed === false ? ' · not listed yet' : ''),
+        why: 'Guesty holds no cleaning fee for this listing, so guests are charged nothing for the clean on every booking made while it is empty. Set it for the building here, or on the listing in Guesty (Pricing)',
+        verb: 'Set fee', href: r.buildingSlug ? '/buildings/' + r.buildingSlug : '/listings/' + encodeURIComponent(r.id),
       })
     }
     if (r.reviews.owed > 0) {
@@ -389,6 +430,7 @@ export function rowWeight(r: AdminRow, today: string): number {
   let w = 0
   if (!r.active) return -1
   for (const k of MAJORS) { const c = r.channels[k]; if (!c) continue; if (NOT_FOR_SALE.indexOf(c.verdict) >= 0) w += 100; else if (c.verdict === 'missing') w += 40 }
+  if (noCleaningFee(r)) w += 90
   w += r.reviews.owedLow * 60 + r.reviews.owed * 25 + r.reviews.low30 * 10
   const ps = performance(r).state
   w += ps === 'poor' ? 50 : ps === 'watch' ? 12 : 0

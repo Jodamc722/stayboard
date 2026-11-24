@@ -39,6 +39,8 @@ export type EventKey =
   | 'channel_health'
   // Owner arriving today: did they get everything? Morning + 3:45pm (Jon, 2026-10-17).
   | 'owner_arrivals'
+  // The listing watch (Jon, 2026-11-24): a property with no cleaning fee; a listing offline on Airbnb.
+  | 'no_cleaning_fee' | 'airbnb_offline'
 
 export const EVENT_LABELS: Record<EventKey, string> = {
   late_cleans: 'Cleans running behind',
@@ -61,6 +63,8 @@ export const EVENT_LABELS: Record<EventKey, string> = {
   notice_drafts: 'Front-desk notice drafts',
   channel_health: 'Listing dropped off a channel',
   owner_arrivals: 'Owner arriving today — did they get everything? (morning + 3:45pm)',
+  no_cleaning_fee: 'Property with no cleaning fee',
+  airbnb_offline: 'Listing offline on Airbnb',
 }
 
 /** The two rooms every area has. Safety issues ride with maintenance — there is no third channel. */
@@ -341,6 +345,14 @@ export const DEFAULT_RULES: SlackRules = {
     // at 00:21 ET, and a window would silently drop that run's message (the outbox does not queue
     // past a window, and the snapshot has already moved on by the next run).
     channel_health: { enabled: true, approval: false, quietStart: 0, quietEnd: 24 * 60, cooldownMin: 0 },
+    // THE LISTING WATCH (Jon, 2026-11-24: "have Eve message us in Slack in the leadership chat"). No
+    // approval: a property with no cleaning fee loses the fee on every booking, and a listing offline
+    // on Airbnb is unbookable there. A window on purpose, unlike channel_health: the 23:03 ET listings
+    // sync falls outside it, so what it finds is said by the morning run, not at midnight (the watch
+    // only marks a listing as said when its message went out). No cooldown: each message carries the
+    // day (or the new listings) in its group key.
+    no_cleaning_fee: { enabled: true, approval: false, quietStart: 7 * 60, quietEnd: 20 * 60, cooldownMin: 0 },
+    airbnb_offline: { enabled: true, approval: false, quietStart: 7 * 60, quietEnd: 20 * 60, cooldownMin: 0 },
   },
   approvers: [JON_SLACK_ID],
   approvalExpiryMin: 240,
@@ -422,7 +434,7 @@ function mergeRule(stored: any, dflt: EventRule): EventRule {
  * something a person sent us. Those do not come through here and are not affected.
  */
 /** Follow-ups Jon asked for by name: they speak through the master mute (each can still be switched off with its own toggle). */
-const ASKED_FOR = new Set<EventKey>(['owner_arrivals'])
+const ASKED_FOR = new Set<EventKey>(['owner_arrivals', 'no_cleaning_fee', 'airbnb_offline'])
 export function broadcastAllowed(rules: SlackRules, key: EventKey): boolean {
   if (rules.onlyEvents && !rules.onlyEvents.includes(key) && !ASKED_FOR.has(key)) return false
   const rule = rules.events[key]
