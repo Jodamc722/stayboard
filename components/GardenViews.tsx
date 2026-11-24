@@ -60,15 +60,16 @@ const MEASURES: (Measure & { of: (a: Acc, total: Acc) => number | null })[] = [
 // Split colours: the brand green first, then quiet hues that stay apart from it and from each other.
 const HUES = ['#52705a', '#c08a3e', '#5b7fa6', '#a8627a', '#7b6bd0', '#4f9a94', '#9a9a9a']
 
-export function GardenViews({ api, from, to, scope, fq, data }: { api: string; from: string; to: string; scope: string; fq: string; data?: any }) {
+/** `lock` pins what the view is grouped by (the Length of stay tab passes 'los') and hides that picker. */
+export function GardenViews({ api, from, to, scope, fq, data, lock }: { api: string; from: string; to: string; scope: string; fq: string; data?: any; lock?: string }) {
   const [own, setD] = useState<any>(null)
   const d = data !== undefined ? data : own
-  const [dimKey, setDimKey] = useState('lead')
+  const [dimKey, setDimKey] = useState(lock || 'lead')
   const [mKey, setMKey] = useState('rev')
   const [splitKey, setSplitKey] = useState('')
   useEffect(() => { if (data !== undefined) return; setD(null); fetch(`${api}?depth=1&from=${from}&to=${to}&scope=${scope}${fq}`, { cache: 'no-store' }).then(r => r.json()).then(setD).catch(e => setD({ ok: false, error: String(e) })) }, [api, from, to, scope, fq, data === undefined])
   // Which view is open lives in the URL, so a link opens the same one.
-  useEffect(() => { try { const sp = new URLSearchParams(location.search); const g = sp.get('by'), m = sp.get('measure'), s = sp.get('split'); if (g && DIMS.some(x => x.key === g)) setDimKey(g); if (m && MEASURES.some(x => x.key === m)) setMKey(m); if (s && DIMS.some(x => x.key === s)) setSplitKey(s) } catch {} }, [])
+  useEffect(() => { try { const sp = new URLSearchParams(location.search); const g = sp.get('by'), m = sp.get('measure'), s = sp.get('split'); if (!lock && g && DIMS.some(x => x.key === g)) setDimKey(g); if (m && MEASURES.some(x => x.key === m)) setMKey(m); if (s && DIMS.some(x => x.key === s)) setSplitKey(s) } catch {} }, [])
   const keep = (k: string, v: string) => { try { const u = new URL(location.href); if (v) u.searchParams.set(k, v); else u.searchParams.delete(k); history.replaceState(null, '', u.toString()) } catch {} }
 
   const dim = DIMS.find(x => x.key === dimKey)!, measure = MEASURES.find(x => x.key === mKey)!
@@ -120,13 +121,29 @@ export function GardenViews({ api, from, to, scope, fq, data }: { api: string; f
   return (
     <div>
       <div className="flex items-center gap-2 flex-wrap mb-3">
-        {([['View by', dimKey, (v: string) => { setDimKey(v); keep('by', v) }, DIMS.map(x => [x.key, x.label])], ['Measure', mKey, (v: string) => { setMKey(v); keep('measure', v) }, MEASURES.map(x => [x.key, x.label])], ['Split by', split?.key || '', (v: string) => { setSplitKey(v); keep('split', v) }, [['', 'Nothing'], ...DIMS.filter(x => x.key !== dimKey && ['channel', 'side', 'los', 'lead', 'type', 'dow'].includes(x.key)).map(x => [x.key, x.label])]]] as [string, string, (v: string) => void, string[][]][]).map(([label, value, set, opts]) => (
+        {([['View by', dimKey, (v: string) => { setDimKey(v); keep('by', v) }, DIMS.map(x => [x.key, x.label])], ['Measure', mKey, (v: string) => { setMKey(v); keep('measure', v) }, MEASURES.map(x => [x.key, x.label])], ['Split by', split?.key || '', (v: string) => { setSplitKey(v); keep('split', v) }, [['', 'Nothing'], ...DIMS.filter(x => x.key !== dimKey && ['channel', 'side', 'los', 'lead', 'type', 'dow'].includes(x.key)).map(x => [x.key, x.label])]]] as [string, string, (v: string) => void, string[][]][]).filter(x => !(lock && x[0] === 'View by')).map(([label, value, set, opts]) => (
           <label key={label} className="inline-flex items-center gap-1.5 text-[12px] text-muted">{label}
             <select value={value} onChange={e => set(e.target.value)} className="text-[12.5px] font-semibold border border-line rounded-lg pl-2.5 pr-1 py-1.5 bg-white text-ink outline-none">{opts.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select>
           </label>
         ))}
         <button onClick={exportCsv} className="ml-auto inline-flex items-center gap-1 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-line bg-white text-ink hover:bg-app"><Download size={12} /> Export</button>
       </div>
+
+      {lock === 'los' && view.total.stays ? (() => {
+        // LENGTH OF STAY at a glance (Jon, 2026-11-24: "make sure we have LOS data on these reports, super
+        // important"): the average, and how the stays split between short and long. Whole-stay nights.
+        const g = (k: string) => view.groups.get(k)?.stays || 0, T = view.total.stays
+        const long = g('7 nights') + g('8–13 nights') + g('14–29 nights') + g('30+ nights'), mid = g('3 nights') + g('4 nights') + g('5 nights') + g('6 nights')
+        const cur = d.split?.find((x: any) => x.scope === scope) || d.split?.[0]
+        return (
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 mb-3">
+            {([['Average length of stay', one(view.total.losSum / T) + ' nights', d.split ? `Garden ${d.split[1].avgStay ?? '—'} · Botanica ${d.split[2].avgStay ?? '—'}` : ''], ['One night', pct((g('1 night') / T) * 100), int(g('1 night')) + ' stays'], ['Two nights', pct((g('2 nights') / T) * 100), int(g('2 nights')) + ' stays'], ['3 to 6 nights', pct((mid / T) * 100), int(mid) + ' stays'], ['7 nights or more', pct((long / T) * 100), int(long) + ' stays']] as [string, string, string][]).map(([l, v, sub]) => (
+              <div key={l} className="rounded-xl border border-line bg-white px-3.5 py-2.5"><div className="text-[10.5px] font-semibold uppercase tracking-wider text-muted">{l}</div><div className="text-[20px] font-semibold tabular-nums text-ink leading-tight mt-0.5">{v}</div><div className="text-[11px] text-muted">{sub}</div></div>
+            ))}
+            {void cur}
+          </div>
+        )
+      })() : null}
 
       {view.keys.length ? (
         <div className="rounded-xl border border-line bg-white overflow-x-auto">

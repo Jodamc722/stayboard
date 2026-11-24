@@ -37,7 +37,7 @@ const PRESETS: Preset[] = [
   { key: 'ytd', label: 'Year to date', range: t => [t.slice(0, 4) + '-01-01', t] },
 ]
 type Metric = 'revenue' | 'occupancy' | 'adr'
-type Tab = 'views' | 'depth' | 'channels' | 'bookings' | 'ahead' | 'types'
+type Tab = 'views' | 'los' | 'depth' | 'channels' | 'bookings' | 'ahead' | 'types'
 // THE FILTER BAR (Jon, 2026-11-23: "make sure we have filter options always, for any report"). Every
 // number, chart, tab, view and export on the page follows it, and it travels in the URL.
 type Filter = { ch: string[]; rt: string[]; wing: string[]; los: string; lead: string; origin: string }
@@ -123,7 +123,7 @@ export function GardenRevenue({ api = '/api/garden/revenue', shared = false, can
   const setScope = (v: Scope) => { setScopeState(v); try { const u = new URL(location.href); if (v === 'all') u.searchParams.delete('scope'); else u.searchParams.set('scope', v); history.replaceState(null, '', u.toString()) } catch {} }
 
   // The period lives in the URL, so a link or a reload opens the same one.
-  useEffect(() => { try { const sp = new URLSearchParams(location.search); const sc = sp.get('scope'); if (sc === 'garden' || sc === 'botanica') setScopeState(sc); if (sp.get('rev') === 'rent') setRentOnlyState(true); const vw = sp.get('view'); if (vw && ['views', 'depth', 'bookings', 'ahead'].includes(vw)) setTab(vw as Tab); const L = (k: string) => (sp.get(k) || '').split('|').filter(Boolean); const R = (k: string, o: [string, string][]) => o.some(x => x[0] === sp.get(k)) ? sp.get(k)! : ''; setFilterState({ ch: L('ch'), rt: L('rt'), wing: L('wing'), los: R('los', LOS_OPTS), lead: R('lead', LEAD_OPTS), origin: R('origin', ORIGIN_OPTS) }); const f = sp.get('from'), t = sp.get('to'); if (f && t && /^\d{4}-\d{2}-\d{2}$/.test(f) && /^\d{4}-\d{2}-\d{2}$/.test(t) && t >= f) { setRange([f, t]); setPreset(PRESETS.find(p => { const r = p.range(todayNY()); return r[0] === f && r[1] === t })?.key || 'custom') } } catch {} }, [])
+  useEffect(() => { try { const sp = new URLSearchParams(location.search); const sc = sp.get('scope'); if (sc === 'garden' || sc === 'botanica') setScopeState(sc); if (sp.get('rev') === 'rent') setRentOnlyState(true); const vw = sp.get('view'); if (vw && ['views', 'los', 'depth', 'bookings', 'ahead'].includes(vw)) setTab(vw as Tab); const L = (k: string) => (sp.get(k) || '').split('|').filter(Boolean); const R = (k: string, o: [string, string][]) => o.some(x => x[0] === sp.get(k)) ? sp.get(k)! : ''; setFilterState({ ch: L('ch'), rt: L('rt'), wing: L('wing'), los: R('los', LOS_OPTS), lead: R('lead', LEAD_OPTS), origin: R('origin', ORIGIN_OPTS) }); const f = sp.get('from'), t = sp.get('to'); if (f && t && /^\d{4}-\d{2}-\d{2}$/.test(f) && /^\d{4}-\d{2}-\d{2}$/.test(t) && t >= f) { setRange([f, t]); setPreset(PRESETS.find(p => { const r = p.range(todayNY()); return r[0] === f && r[1] === t })?.key || 'custom') } } catch {} }, [])
   const go = (r: [string, string], key: string) => { setRange(r); setPreset(key); try { const u = new URL(location.href); u.searchParams.set('from', r[0]); u.searchParams.set('to', r[1]); history.replaceState(null, '', u.toString()) } catch {} }
   const load = useCallback(async () => {
     setLoading(true)
@@ -293,7 +293,7 @@ export function GardenRevenue({ api = '/api/garden/revenue', shared = false, can
         <Kpi label="Occupancy" value={pct(b.occupancy)} sub={`${b.nights.toLocaleString()} room nights`}>{prevCovered ? <Delta cur={b.occupancy} prev={p.occupancy} unit="pts" /> : null}</Kpi>
         <Kpi label="ADR" value={money(b.adr)} sub={rentOnly ? `with cleaning ${money(b.adrAll)}` : `rent only ${money(b.adrRent)}`}>{prevCovered ? <Delta cur={b.adr} prev={p.adr} unit="pct" /> : null}</Kpi>
         <Kpi label="RevPAR" value={money(b.revpar)} sub={`${d.rooms} rooms`}>{prevCovered ? <Delta cur={b.revpar} prev={p.revpar} unit="pct" /> : null}</Kpi>
-        <Kpi label="Stays" value={b.bookings.toLocaleString()} sub={`${b.cancelled} cancelled`}>{prevCovered ? <Delta cur={b.bookings} prev={p.bookings} unit="pct" /> : null}</Kpi>
+        <Kpi label="Stays" value={b.bookings.toLocaleString()} sub={(() => { const c = dd?.ok ? dd.split?.find((x: any) => x.scope === scope) : null; return (c?.avgStay != null ? `avg stay ${c.avgStay} nights · ` : '') + `${b.cancelled} cancelled` })()}>{prevCovered ? <Delta cur={b.bookings} prev={p.bookings} unit="pct" /> : null}</Kpi>
         <Kpi label={future ? 'Booked so far' : 'Booked in period'} value={past || !future ? String(d.booked.bookings) : '—'} sub={past || !future ? `${money(d.booked.revenue)}${d.booked.cancelled ? ` · ${d.booked.cancelled} since cancelled` : ''}` : 'not started yet'} />
       </div>
       {/* One quiet line; how it is counted sits behind a click. */}
@@ -338,12 +338,13 @@ export function GardenRevenue({ api = '/api/garden/revenue', shared = false, can
 
       {/* The detail, in tabs. */}
       <div className="flex gap-1 mt-5 mb-3 border-b border-line overflow-x-auto">
-        {([['views', 'Views'], ['depth', 'In-depth report'], ['bookings', `Bookings · ${(d.bookingsTotal ?? (d.bookings || []).length).toLocaleString()}`], ['ahead', 'Rates ahead']] as [Tab, string][]).map(([k, l]) => (
+        {([['views', 'Views'], ['los', 'Length of stay'], ['depth', 'In-depth report'], ['bookings', `Bookings · ${(d.bookingsTotal ?? (d.bookings || []).length).toLocaleString()}`], ['ahead', 'Rates ahead']] as [Tab, string][]).map(([k, l]) => (
           <button key={k} onClick={() => pickTab(k)} className={`px-3 py-2 text-[13px] font-semibold whitespace-nowrap -mb-px border-b-2 ${tab === k ? 'border-ink text-ink' : 'border-transparent text-muted hover:text-ink'}`}>{l}</button>
         ))}
       </div>
 
       {tab === 'views' ? <GardenViews api={api} from={range[0]} to={range[1]} scope={scope} fq={fq} data={dd} /> : null}
+      {tab === 'los' ? <GardenViews key="los" lock="los" api={api} from={range[0]} to={range[1]} scope={scope} fq={fq} data={dd} /> : null}
       {tab === 'depth' ? <GardenDepth api={api} fq={fq} shared={shared} data={dd} splitAbove from={range[0]} to={range[1]} scope={scope} onScope={setScope} /> : null}
 
       {tab === 'bookings' ? ((d.bookings || []).length ? (<>

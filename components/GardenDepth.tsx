@@ -73,12 +73,12 @@ export function GardenSplit({ d, scope, onScope, compact = false }: { d: any; sc
   // The eight a person reads first; the make-up of the revenue and the rest sit behind "All rows".
   const MAIN: [string, (x: any) => string, string][] = [
     ['Rooms', x => String(x.rooms), 'rooms'], [d.rentOnly ? 'Revenue (rent only)' : 'Revenue (rent + cleaning)', x => money(x.revenue), 'revenue'], ['Parking and add-ons', x => money(x.other), 'other'],
-    ['Room nights sold', x => int(x.nights), 'nights'], ['Occupancy', x => pct(x.occupancy), ''], ['ADR', x => money(x.adr), ''], ['RevPAR', x => money(x.revpar), ''], ['Stays', x => int(x.stays), 'stays'],
+    ['Room nights sold', x => int(x.nights), 'nights'], ['Occupancy', x => pct(x.occupancy), ''], ['ADR', x => money(x.adr), ''], ['RevPAR', x => money(x.revpar), ''], ['Stays', x => int(x.stays), 'stays'], ['Average length of stay', x => x.avgStay == null ? '—' : x.avgStay + ' nights', ''],
   ]
   const REST: [string, (x: any) => string, string][] = [
     ['Rent', x => money(x.rent), 'rent'], ['Cleaning fees', x => money(x.fees), 'fees'], ['Cleaning on top of rent', x => x.feePct == null ? '—' : '+' + x.feePct + '%', ''], ['Total revenue with parking', x => money((x.rent || 0) + (x.fees || 0) + (x.other || 0)), '__total'],
     ['ADR, rent only', x => money(x.adrRent), ''], ['ADR with cleaning', x => money(x.adrAll), ''], ['Blocked in Cloudbeds', x => int(x.blocked), 'blocked'],
-    ['Arrivals in the period', x => int(x.arrivals), 'arrivals'], ['Average stay', x => x.avgStay == null ? '—' : x.avgStay + ' nights', ''],
+    ['One-night stays', x => x.oneNightPct == null ? '—' : x.oneNightPct + '%', ''], ['Stays of 7+ nights', x => x.weekPlusPct == null ? '—' : x.weekPlusPct + '%', ''], ['Arrivals in the period', x => int(x.arrivals), 'arrivals'],
     ['Cancelled / no-show', x => `${int(x.cancelled)} (${x.cancelRate}%)`, 'cancelled'], ['Revenue lost to cancellations', x => money(x.lostRevenue), 'lostRevenue'], ['Balance owed', x => `${money(x.owed)} · ${x.owedStays} stays`, 'owed'],
   ]
   // A row of zeros says nothing: parking and add-ons only shows when there is some.
@@ -123,7 +123,7 @@ export function GardenDepth({ from, to, scope, onScope, api = '/api/garden/reven
   const exportCsv = () => {
     const out: any[][] = [[`The Garden Hotel & Resort — in-depth report`], [`${dayLabel(d.from)} to ${dayLabel(d.to)}`, d.label], []]
     const add = (title: string, head: string[], rows: any[][]) => { out.push([title]); out.push(head); for (const r of rows) out.push(r); out.push([]) }
-    add('Whole property vs Garden vs Botanica', ['', 'Rooms', 'Rent', 'Cleaning fees', 'Cleaning on top of rent %', 'Parking and add-ons', 'Revenue as shown', 'Room nights', 'Occupancy %', 'ADR rent only', 'ADR with cleaning', 'RevPAR as shown', 'Stays', 'Avg stay', 'Cancelled', 'Cancel %', 'Balance owed'], d.split.map((x: any) => [x.label, x.rooms, x.rent, x.fees, x.feePct, x.other, x.revenue, x.nights, x.occupancy, x.adrRent, x.adrAll, x.revpar, x.stays, x.avgStay, x.cancelled, x.cancelRate, x.owed]))
+    add('Whole property vs Garden vs Botanica', ['', 'Rooms', 'Rent', 'Cleaning fees', 'Cleaning on top of rent %', 'Parking and add-ons', 'Revenue as shown', 'Room nights', 'Occupancy %', 'ADR rent only', 'ADR with cleaning', 'RevPAR as shown', 'Stays', 'Average length of stay', 'Cancelled', 'Cancel %', 'Balance owed'], d.split.map((x: any) => [x.label, x.rooms, x.rent, x.fees, x.feePct, x.other, x.revenue, x.nights, x.occupancy, x.adrRent, x.adrAll, x.revpar, x.stays, x.avgStay, x.cancelled, x.cancelRate, x.owed]))
     const core = (r: any) => [r.revenue, r.nights, r.occupancy ?? '', r.adr ?? '', r.revpar ?? '']
     const H = ['Revenue', 'Room nights', 'Occupancy %', 'ADR', 'RevPAR']
     add('By month', ['Month', ...H], d.byMonth.map((r: any) => [r.month, ...core(r)]))
