@@ -22,6 +22,7 @@ export async function GET(req: NextRequest) {
   if (from && to && (Date.parse(to) - Date.parse(from)) / 86400000 > MAX_DAYS) return NextResponse.json({ ok: false, error: 'Pick a period of two years or less.' })
   const filter = parseFilter(sp)
   try {
+    if (sp.get('nightly')) { const { gardenNightly } = await import('@/lib/garden/nightly'); return NextResponse.json({ ok: true, shared: true, ...(await gardenNightly()) }) }
     if (sp.get('depth') && from && to) { const { gardenDepth } = await import('@/lib/garden/report-depth'); return NextResponse.json(forLink({ ok: true, ...(await gardenDepth(from, to >= from ? to : from, scope, filter)) })) }
     return NextResponse.json(forLink({ ok: true, ...(await gardenRevenue({ from, to, ahead: Number(sp.get('ahead')) || undefined, scope, filter })) }))
   } catch (e: any) { return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 300) }) }
