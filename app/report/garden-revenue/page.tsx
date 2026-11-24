@@ -7,6 +7,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Loader2, Lock } from 'lucide-react'
 import { GardenRevenue } from '@/components/GardenRevenue'
+import { GardenNightly } from '@/components/GardenNightly'
 import { GardenBrand } from '@/components/GardenBrand'
 
 const CODE = 'garden-revenue'
@@ -18,6 +19,9 @@ export default function GardenRevenueSharePage() {
   const [pw, setPw] = useState('')
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
+  const [view, setView] = useState<'revenue' | 'nightly'>('revenue')
+  useEffect(() => { try { if (new URL(location.href).searchParams.get('tab') === 'nightly') setView('nightly') } catch {} }, [])
+  const pick = (v: 'revenue' | 'nightly') => { setView(v); try { const u = new URL(location.href); if (v === 'nightly') u.searchParams.set('tab', v); else u.searchParams.delete('tab'); history.replaceState(null, '', u.toString()) } catch {} }
 
   useEffect(() => {
     fetch('/api/public/link-auth?code=' + CODE, { cache: 'no-store' }).then(r => r.json()).then(j => {
@@ -48,6 +52,7 @@ export default function GardenRevenueSharePage() {
             <div className="gh-display text-[15px] font-semibold leading-tight">Revenue report</div>
             <div className="text-[11px] text-muted">The Garden Hotel &amp; Resort · Botanica · read-only</div>
           </div>
+          {state === 'open' ? <div className="ml-auto inline-flex rounded-lg border border-line overflow-hidden text-[12.5px] print:hidden">{([['revenue', 'Revenue'], ['nightly', 'Nightly report']] as const).map(([k, l]) => <button key={k} onClick={() => pick(k)} className={'px-3 py-1.5 font-semibold border-l border-line first:border-l-0 ' + (view === k ? 'bg-ink text-white' : 'bg-white text-muted hover:text-ink')}>{l}</button>)}</div> : null}
         </div>
       </header>
       <main className="max-w-[1180px] mx-auto px-4 sm:px-6 py-5">
@@ -62,7 +67,7 @@ export default function GardenRevenueSharePage() {
             <button type="submit" disabled={!pw || busy} className="mt-3 w-full h-10 rounded-lg bg-brand-600 text-white text-[13.5px] font-semibold disabled:opacity-50">{busy ? 'Checking…' : 'Open the report'}</button>
           </form>
         ) : null}
-        {state === 'open' ? <GardenRevenue api={API} shared onLocked={onLocked} /> : null}
+        {state === 'open' ? (view === 'nightly' ? <GardenNightly api={API} onLocked={onLocked} /> : <GardenRevenue api={API} shared onLocked={onLocked} />) : null}
       </main>
     </div>
   )
