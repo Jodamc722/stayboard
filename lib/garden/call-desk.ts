@@ -47,8 +47,12 @@ export async function buildCallQueue(): Promise<{ added: number; expired: number
   const t0 = todayET(0)
   const { data: res } = await db.from('garden_reservations').select('id,status,guest_name,guest_phone,check_in,check_out,nights,source,room_names,balance')
     .in('status', [...LIVE, 'checked_out']).gte('check_out', addDays(t0, -4)).lte('check_in', addDays(t0, h.welcomeCall.daysBefore + 1))
-  const { data: existing } = await db.from('garden_call_queue').select('reservation_id,kind')
-  const have = new Set(((existing || []) as any[]).map(q => `${q.reservation_id}|${q.kind}`))
+  // Every existing row, not the first 1,000 (found 2026-11-24: past 1,000 rows this read came back short,
+  // the insert below then hit a row it could not see, threw on the duplicate, and nothing after it ran —
+  // so closed windows were never closed and the desk's list grew to hundreds of stays already gone).
+  const { pageRows } = await import('../db-page')
+  const existing = (await pageRows<any>((a, b) => db.from('garden_call_queue').select('id,reservation_id,kind').order('id').range(a, b), 30)).rows
+  const have = new Set(existing.map(q => `${q.reservation_id}|${q.kind}`))
   const { data: vers } = await db.from('garden_verifications').select('reservation_id,kind,status').in('status', ['passed', 'waived'])
   const verOk: Record<string, Set<string>> = {}
   for (const v of ((vers || []) as any[])) (verOk[v.reservation_id] = verOk[v.reservation_id] || new Set()).add(v.kind)
@@ -70,16 +74,35 @@ export async function buildCallQueue(): Promise<{ added: number; expired: number
     }
   }
   let added = 0
-  if (rows.length) { const { error } = await db.from('garden_call_queue').insert(rows); if (error) throw new Error(error.message); added = rows.length }
+  // A row that already exists is skipped, never an error: the upkeep below must always run.
+  if (rows.length) { const { data: ins, error } = await db.from('garden_call_queue').upsert(rows, { onConflict: 'reservation_id,kind', ignoreDuplicates: true }).select('id'); if (!error) added = (ins || []).length }
   // Windows that closed: incomplete, not carried (the VR rule).
   const { data: exp } = await db.from('garden_call_queue').update({ status: 'expired', note: 'window closed — not completed in time' }).eq('status', 'pending').lt('window_end', new Date().toISOString()).select('id')
+  // A call nobody can make any more leaves the list: the booking was cancelled, or the guest has already
+  // arrived (welcome call, ID and card check) — whatever its window says.
+  let closed = 0
+  {
+    const pend = (await pageRows<any>((a, b) => db.from('garden_call_queue').select('id,reservation_id,kind').eq('status', 'pending').order('id').range(a, b), 30)).rows
+    const rid = Array.from(new Set(pend.map(q => q.reservation_id).filter(Boolean)))
+    const st: Record<string, any> = {}
+    for (let i = 0; i < rid.length; i += 200) { const { data } = await db.from('garden_reservations').select('id,status,check_in,check_out').in('id', rid.slice(i, i + 200)); for (const r of ((data || []) as any[])) st[r.id] = r }
+    const dead: string[] = []
+    for (const q of pend) {
+      const r = st[q.reservation_id]
+      if (!r) continue
+      const gone = r.status === 'canceled' || r.status === 'no_show'
+      const arrived = (q.kind === 'welcome' || q.kind === 'verification' || q.kind === 'pre_arrival') && (r.status === 'checked_in' || r.status === 'checked_out' || r.check_in < t0)
+      if (gone || arrived) dead.push(q.id)
+    }
+    for (let i = 0; i < dead.length; i += 200) { const { error } = await db.from('garden_call_queue').update({ status: 'expired', note: 'closed — the booking was cancelled or the guest had already arrived' }).in('id', dead.slice(i, i + 200)); if (!error) closed += Math.min(200, dead.length - i) }
+  }
   // Verification queue rows complete themselves when the checks pass.
   const { data: pendV } = await db.from('garden_call_queue').select('id,reservation_id').eq('status', 'pending').eq('kind', 'verification')
   for (const q of ((pendV || []) as any[])) {
     const ok = (!h.verification.requireId || verOk[q.reservation_id]?.has('id')) && (!h.verification.requireCard || verOk[q.reservation_id]?.has('card'))
     if (ok) await db.from('garden_call_queue').update({ status: 'done', done_at: new Date().toISOString(), done_by: 'verifications', last_outcome: 'verified' }).eq('id', q.id)
   }
-  return { added, expired: (exp || []).length }
+  return { added, expired: (exp || []).length + closed }
 }
 
 /** A call logged in garden_calls updates its queue row. Called by the calls route. */
