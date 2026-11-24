@@ -29,7 +29,9 @@ export async function GET(req: NextRequest) {
   const days = Math.min(365, Math.max(7, Number(sp.get('days')) || 90))
   const status = sp.get('status') || 'all'
   const db = supabaseAdmin()
-  const synced = await maybeSyncGuesty()
+  // Only when asked (?sync=1): the page shows what is already here first, then asks for this quietly.
+  // It used to run before every first read and held the page on "Loading…" for as long as Guesty took.
+  const synced = sp.get('sync') ? await maybeSyncGuesty() : null
   let q = db.from('garden_reviews').select('*').gte('received_at', new Date(Date.now() - days * 86400000).toISOString()).order('received_at', { ascending: false }).limit(300)
   if (status === 'unanswered') q = q.in('reply_status', ['none', 'drafted'])
   if (status === 'negative') q = q.eq('sentiment', 'negative')
