@@ -21,6 +21,8 @@ export async function GET(req: NextRequest) {
   const from = D.test(sp.get('from') || '') ? sp.get('from')! : undefined, to = D.test(sp.get('to') || '') ? sp.get('to')! : undefined
   const filter = parseFilter(sp)
   try {
+    // ?nightly=1 → the night-by-night report for all three sides (lib/garden/nightly).
+    if (sp.get('nightly')) { const { gardenNightly } = await import('@/lib/garden/nightly'); return NextResponse.json({ ok: true, ...(await gardenNightly()) }) }
     // ?depth=1 → the in-depth report for the period and scope (lib/garden/report-depth).
     if (sp.get('depth') && from && to) { const { gardenDepth } = await import('@/lib/garden/report-depth'); return NextResponse.json({ ok: true, ...(await gardenDepth(from, to >= from ? to : from, scope, filter)) }) }
     return NextResponse.json({ ok: true, ...(await gardenRevenue({ from, to, ahead: Number(sp.get('ahead')) || undefined, scope, filter })) })
