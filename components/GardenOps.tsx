@@ -80,6 +80,8 @@ export function GardenReviews({ canEdit }: { canEdit: boolean }) {
   const [note, setNote] = useState('')
   const load = useCallback(async () => setD(await j(`/api/garden/reviews?status=${status}`)), [status])
   useEffect(() => { load() }, [load])
+  // Once per visit, after the page is up: pull anything new from Guesty, then show it.
+  useEffect(() => { j('/api/garden/reviews?sync=1&status=all').then(r => { if (r?.synced && (r.synced.added || r.synced.updated)) load() }).catch(() => {}) }, []) // eslint-disable-line react-hooks/exhaustive-deps
   const act = async (op: string, id: string, extra: any = {}) => { setBusy(id); const r = await post('/api/garden/reviews', { op, id, ...extra }); if (op === 'draft' && r?.draft) setDrafts(x => ({ ...x, [id]: r.draft })); if (r?.error) setNote(String(r.error)); else if (op === 'post') setNote('Reply posted through Guesty.'); setBusy(''); load() }
   const syncGuesty = async () => { setBusy('sync'); const r = await post('/api/garden/reviews', { op: 'sync_guesty' }); setNote(r?.error ? String(r.error) : `Guesty: ${r.added ?? 0} new · ${r.updated ?? 0} updated from ${r.units ?? 0} Botanica units`); setBusy(''); load() }
   const importCsv = async () => { const r = await post('/api/garden/reviews', { op: 'import_csv', csv }); setNote(`${r.added ?? 0} added · ${r.updated ?? 0} updated${r.errors?.length ? ` · ${r.errors.length} errors` : ''}`); setCsv(''); setShowImport(false); load() }

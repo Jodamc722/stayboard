@@ -190,12 +190,15 @@ function Table({ head, children }: { head: string[]; children: ReactNode }) {
 const Td = ({ children, className = '', title }: { children?: ReactNode; className?: string; title?: string }) => <td title={title} className={`px-3 py-1.5 whitespace-nowrap align-middle ${className}`}>{children}</td>
 
 const verTone = (v: string): Tone => v === 'passed' || v === 'waived' || v === 'on_file' ? 'emerald' : v === 'failed' ? 'rose' : 'slate'
-const Ver = ({ k, v, title }: { k: string; v: string; title?: string }) => <Tag tone={verTone(v)} title={title || `${k} ${v.replace('_', ' ')}`}>{k} {v === 'passed' ? '✓' : v === 'on_file' ? 'on file' : v === 'waived' ? 'waived' : v === 'failed' ? '✗' : '…'}</Tag>
+// One coloured chip only when someone has to act (lean rule 7): done and on-file are quiet grey words.
+const Ver = ({ k, v, title }: { k: string; v: string; title?: string }) => v === 'passed' || v === 'on_file' || v === 'waived'
+  ? <span className="text-muted" title={title || `${k} ${v.replace('_', ' ')}`}>{v === 'passed' ? 'checked' : v === 'on_file' ? 'on file' : 'waived'}</span>
+  : <Tag tone={v === 'failed' ? 'rose' : 'amber'} title={title || `${k} ${v.replace('_', ' ')}`}>{v === 'failed' ? `${k} failed` : `needs ${k}`}</Tag>
 // The desk's notes read into tags (lib/garden/notes-read); the full notes on hover.
 const NoteTags = ({ g }: { g: any }) => !g.noteTags?.length ? (g.notes?.length ? <span className="text-muted" title={g.notes.join('\n\n')}>note</span> : <span className="text-muted">—</span>) : <span className="inline-flex items-center gap-1" title={g.notes.join('\n\n')}>{g.noteTags.slice(0, 4).map((t: any) => <Tag key={t.key} tone={t.tone} title={t.detail || undefined}>{t.label}</Tag>)}{g.noteTags.length > 4 ? <span className="text-muted text-[11px]">+{g.noteTags.length - 4}</span> : null}</span>
 // Operto: the door code and whether self check-in is done.
 const Code = ({ g }: { g: any }) => !g.operto ? <span className="text-muted">—</span> : <span className="inline-flex items-center gap-1">{g.operto.code ? <span className="font-mono text-[12px] text-ink" title={g.operto.codeUsedAt ? `First used ${g.operto.codeUsedAt}` : 'Not used yet'}>{g.operto.code}</span> : null}{g.operto.checkin ? <Tag tone={g.operto.checkin === 'done' ? 'emerald' : g.operto.checkin === 'started' ? 'amber' : 'slate'}>{g.operto.checkin === 'done' ? 'self check-in ✓' : g.operto.checkin === 'started' ? 'check-in started' : 'not started'}</Tag> : null}{g.operto.codeUsedAt ? <Tag tone="brand">used</Tag> : null}</span>
-const CallTag = ({ g }: { g: any }) => <Tag tone={g.call === 'reached' ? 'emerald' : g.call === 'tried' ? 'amber' : 'slate'} title={g.lastCallAt ? `Last call ${clock(g.lastCallAt)}` : 'No welcome / pre-arrival call logged'}>{g.call === 'reached' ? 'reached' : g.call === 'tried' ? `${g.callAttempts} tried` : 'not called'}</Tag>
+const CallTag = ({ g }: { g: any }) => { const t = g.lastCallAt ? `Last call ${clock(g.lastCallAt)}` : 'No welcome / pre-arrival call logged'; const w = g.call === 'reached' ? 'reached' : g.call === 'tried' ? `${g.callAttempts} tried` : 'not called'; return g.call === 'tried' ? <Tag tone="amber" title={t}>{w}</Tag> : <span className="text-muted" title={t}>{w}</span> }
 
 const matchGuest = (g: any, q: string) => !q || [g.guest, g.rooms.join(' '), g.source, g.phone, g.email, g.id].join(' ').toLowerCase().includes(q.toLowerCase())
 
@@ -221,7 +224,7 @@ function Guests({ rows, q, mode, empty }: { rows: any[]; q: string; mode: 'arriv
           <Td className="text-muted tabular-nums">{dayShort(g.checkIn)} → {dayShort(g.checkOut)}</Td>
           <Td className="tabular-nums text-muted">{g.nights ?? '—'}</Td>
           <Td className="text-muted max-w-[9rem] truncate" title={g.source || ''}>{g.source || 'Direct'}</Td>
-          <Td className="tabular-nums">{g.balance > 0 && !isPaid(g) ? <span className="font-semibold text-amber-700">{usd(g.balance)} owed</span> : <Tag tone="emerald" title={g.balance > 0 ? `Marked prepaid in the notes · Cloudbeds still shows ${usd(g.balance)}` : 'Nothing owed'}>paid ✓</Tag>}</Td>
+          <Td className="tabular-nums">{g.balance > 0 && !isPaid(g) ? <span className="font-semibold text-amber-700">{usd(g.balance)} owed</span> : <span className="text-muted" title={g.balance > 0 ? `Marked prepaid in the notes · Cloudbeds still shows ${usd(g.balance)}` : 'Nothing owed'}>paid</span>}</Td>
           <Td><Ver k="ID" v={g.id_status} title={g.id_status === 'on_file' ? `ID on file${g.idType ? ' · ' + g.idType : ''}` : undefined} /></Td>
           <Td><Ver k="card" v={g.card_status} /></Td>
           <Td><Code g={g} /></Td>

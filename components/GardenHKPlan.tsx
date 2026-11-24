@@ -234,31 +234,17 @@ export function GardenHKPlan({ canEdit, canSchedule = false }: { canEdit: boolea
       </div>
 
       {live && (d.mismatches.length > 0 || d.notArrived.length > 0 || d.syncError) && (
-        <div className="rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-[12px] text-amber-800">
-          <span className="font-semibold inline-flex items-center gap-1.5"><AlertTriangle size={12} /> Check with the front desk:</span>{' '}
-          {d.syncError ? `the last Cloudbeds read had a problem (${d.syncError}). ` : ''}
-          {d.mismatches.length ? `Cloudbeds labels ${d.mismatches.slice(0, 10).map((m: any) => `${m.room} as ${m.cloudbeds} (here: ${m.ours})`).join(', ')}${d.mismatches.length > 10 ? ` and ${d.mismatches.length - 10} more` : ''}. ` : ''}
-          {d.notArrived.length ? `Booked from an earlier day but never checked in, so no stayover: ${d.notArrived.map((m: any) => m.room).join(', ')}.` : ''}
-        </div>
+        <details className="np rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-2 text-[12px] text-amber-800">
+          <summary className="cursor-pointer font-semibold select-none"><AlertTriangle size={12} className="inline -mt-0.5 mr-1" />{d.syncError ? 'The last Cloudbeds read had a problem' : `${d.mismatches.length + d.notArrived.length} room${d.mismatches.length + d.notArrived.length === 1 ? '' : 's'} to check with the front desk`}</summary>
+          <p className="mt-1">
+            {d.syncError ? `${d.syncError}. ` : ''}
+            {d.mismatches.length ? `Cloudbeds labels ${d.mismatches.slice(0, 10).map((m: any) => `${m.room} as ${m.cloudbeds} (here: ${m.ours})`).join(', ')}${d.mismatches.length > 10 ? ` and ${d.mismatches.length - 10} more` : ''}. ` : ''}
+            {d.notArrived.length ? `Booked from an earlier day but never checked in, so no stayover: ${d.notArrived.map((m: any) => m.room).join(', ')}.` : ''}
+          </p>
+        </details>
       )}
       {msg && <div className={'np rounded-xl border px-3.5 py-2.5 text-[13px] flex items-center gap-2 ' + (msg.warn ? 'border-amber-200 bg-amber-50 text-amber-800' : 'border-emerald-200 bg-emerald-50 text-emerald-700')}>{msg.warn ? <AlertTriangle size={14} className="shrink-0" /> : <Check size={14} className="shrink-0" />} {msg.t}</div>}
 
-      {/* THREE STEPS, while the day is not set up yet. Each one ticks itself off. */}
-      {canEdit && !past && all.length > 0 && (working === 0 || unassignedCount > 0) && (
-        <div className="np rounded-xl border border-brand-200 bg-brand-50 px-3.5 py-2.5 flex items-center gap-x-5 gap-y-1.5 flex-wrap text-[12.5px] text-brand-900">
-          <span className="gh-display font-bold text-[12px]">Set up {live ? 'today' : dayShort(d.date)}</span>
-          {[
-            { ok: working > 0, t: working > 0 ? `${working} working` : d.homebase?.connected ? 'Who is working — nobody is on the Homebase schedule for this day; tick names on the left' : 'Tick who is working (left)' },
-            { ok: unassignedCount === 0, t: unassignedCount === 0 ? 'Every room has a housekeeper' : `Hand out the ${unassignedCount} rooms` },
-            { ok: unassignedCount === 0 && working > 0, t: live ? 'Sent to Cloudbeds as you assign' : 'Sent to Cloudbeds on the morning of the day' },
-          ].map((x, i) => (
-            <span key={i} className={'inline-flex items-center gap-1.5 ' + (x.ok ? 'opacity-60' : 'font-semibold')}>
-              <span className={'w-[18px] h-[18px] rounded-full grid place-items-center text-[10px] font-bold ' + (x.ok ? 'bg-brand-600 text-white' : 'bg-white border border-brand-300 text-brand-800')}>{x.ok ? <Check size={11} /> : i + 1}</span>{x.t}
-            </span>
-          ))}
-          {working > 0 && unassignedCount > 0 && <button onClick={autoAssign} disabled={!!busy} className="ml-auto inline-flex items-center gap-1.5 rounded-lg bg-brand-600 text-white px-3 py-1.5 text-[12.5px] font-semibold hover:bg-brand-700 disabled:opacity-50">{busy === 'auto' ? <RefreshCw size={13} className="animate-spin" /> : <Wand2 size={13} />} Auto-assign {unassignedCount} rooms</button>}
-        </div>
-      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-[280px_minmax(0,1fr)] gap-3 items-start pb-16">
         {/* 3. THE TEAM RAIL */}
@@ -325,15 +311,15 @@ export function GardenHKPlan({ canEdit, canSchedule = false }: { canEdit: boolea
           {who && <div className="np text-[12px] text-ink">Showing <b>{who}</b>&apos;s rooms. <button onClick={() => setWho('')} className="font-semibold text-brand-700 hover:underline">Show everyone</button></div>}
           {rows.length === 0 ? <div className="rounded-xl border border-line bg-white px-3 py-8 text-center text-[12px] text-muted">{onlyUnassigned ? 'Every room this day has a person on it.' : all.length ? 'No rooms in this view.' : 'No checkouts, stayovers or arrivals for this day.'}</div> : (
             <div className="overflow-x-auto rounded-xl border border-line bg-white shadow-sm">
-              <table className="block sm:table w-full text-[12px] border-collapse">
+              <table className="block sm:table sm:table-fixed w-full text-[12px] border-collapse [&_td]:break-words">
                 <thead className="hidden sm:table-header-group">
                   <tr className="bg-neutral-50 text-neutral-500 text-[10px] uppercase tracking-wider text-left font-semibold border-b border-line">
                     <th className="np px-2.5 py-2 w-8">{canEdit && <input type="checkbox" checked={allSelected} onChange={e => setSel(e.target.checked ? Object.fromEntries(pickable.map(r => [r.roomId, true])) : {})} aria-label={'Select all ' + pickable.length + ' rooms'} className="accent-brand-600 align-middle" />}</th>
-                    <th className="px-2.5 py-2 font-semibold min-w-[150px]">HK Team</th>
+                    <th className="px-2.5 py-2 font-semibold sm:w-[10.5rem]">HK Team</th>
                     <th className="px-2 py-2 font-semibold">Room</th>
-                    <th className="px-2 py-2 font-semibold text-right whitespace-nowrap" title="45 min a checkout or same-day turn, 20 a stayover, 8 an inspection">Est. time</th>
+                    <th className="px-2 py-2 font-semibold text-right whitespace-nowrap sm:w-[4.5rem]" title="45 min a checkout or same-day turn, 20 a stayover, 8 an inspection">Time</th>
                     <th className="px-2 py-2 font-semibold">Reservation</th>
-                    <th className="px-2 py-2 font-semibold sm:w-[12.5rem]">Status</th>
+                    <th className="px-2 py-2 font-semibold sm:w-[11.5rem]">Status</th>
                   </tr>
                 </thead>
                 <tbody className="block sm:table-row-group">

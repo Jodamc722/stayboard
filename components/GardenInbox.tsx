@@ -156,8 +156,8 @@ export function GardenInbox({ canEdit: canEditProp }: { canEdit: boolean }) {
   const head = (
     <LeanHead title="Inbox" icon={<InboxIcon size={20} className="text-emerald-700" />}>
       {d?.ok ? <>
-        <Pill tone={needCount ? 'rose' : 'emerald'} title="Guest messages, missed calls, voicemails and reviews still owed an answer" onClick={() => { setNeeds(true); setStatus('all') }}>{needCount} need a reply</Pill>
-        <Pill tone={unreadCount ? 'amber' : 'slate'} title="Not opened yet">{unreadCount} unread</Pill>
+        {needCount ? <Pill tone="rose" title="Guest messages, missed calls, voicemails and reviews still owed an answer" onClick={() => { setNeeds(true); setStatus('all') }}>{needCount} need a reply</Pill> : null}
+        {unreadCount ? <Pill tone="amber" title="Not opened yet">{unreadCount} unread</Pill> : null}
         <Pill title="Open conversations">{openCount} open</Pill>
       </> : null}
       {canEdit && d?.ok ? <button onClick={() => setShowSetup(v => !v)} className="rounded-lg border border-line bg-white px-2.5 h-7 text-[12px] font-semibold inline-flex items-center gap-1" title="How guest conversations get into this inbox"><Plug size={12} /> Connect sources</button> : null}
@@ -187,16 +187,16 @@ export function GardenInbox({ canEdit: canEditProp }: { canEdit: boolean }) {
                 <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search guest, room, reservation, text…" className="flex-1 bg-transparent text-[12.5px] outline-none min-w-0" />
               </label>
               <ChipRow label="Source">
-                {SOURCE_CHIPS.filter(c => c.key === 'all' || srcCounts[c.key] || source === c.key || ['email', 'messaging', 'phone', 'review'].includes(c.key)).map(c => (
+                {SOURCE_CHIPS.filter(c => c.key === 'all' || srcCounts[c.key] || source === c.key).map(c => (
                   <Chip key={c.key} on={source === c.key} n={srcCounts[c.key]} onClick={() => setSource(c.key)}>{c.icon}{c.label}</Chip>
                 ))}
               </ChipRow>
               <ChipRow label="Channel">
                 <Chip on={channel === 'all'} n={chanCounts.all} onClick={() => setChannel('all')}>All</Chip>
-                {d.channels.map(c => <Chip key={c} on={channel === c} n={chanCounts[c] || 0} onClick={() => setChannel(c)}>{c === 'Direct' ? 'Direct/Website' : c}</Chip>)}
+                {d.channels.filter(c => chanCounts[c] || channel === c).map(c => <Chip key={c} on={channel === c} n={chanCounts[c] || 0} onClick={() => setChannel(c)}>{c === 'Direct' ? 'Direct/Website' : c}</Chip>)}
               </ChipRow>
               <ChipRow label="Status">
-                {(['open', 'waiting', 'closed', 'all'] as const).map(st => <Chip key={st} on={status === st} n={stCounts[st]} onClick={() => setStatus(st)}>{st[0].toUpperCase() + st.slice(1)}</Chip>)}
+                {(['open', 'waiting', 'closed', 'all'] as const).filter(st => st === 'all' || st === 'open' || stCounts[st] || status === st).map(st => <Chip key={st} on={status === st} n={stCounts[st]} onClick={() => setStatus(st)}>{st[0].toUpperCase() + st.slice(1)}</Chip>)}
                 <Chip on={needs} onClick={() => setNeeds(v => !v)} tone="rose">Needs reply</Chip>
               </ChipRow>
               <div className="flex items-center gap-2">
