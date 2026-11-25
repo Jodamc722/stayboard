@@ -34,7 +34,17 @@ export type SegRoom = { id: string; name: string; type: string; segment: Segment
 // leave out". So `total` — what revenue, ADR and RevPAR add up — is rent + cleaning (or rent alone on "rent
 // only"); parking and add-ons are revenue shown on their own line, never in ADR; Guesty's revenue fee,
 // service, marketing and the other pass-through lines are not counted anywhere.
-export type StayPart = { room: string; segment: Segment; total: number; rent: number; fees: number; other: number }
+// `from`/`to` are a room's OWN nights when they differ from the booking's (a room move, a second room for part of the
+// stay): Cloudbeds counts a room only on the nights it is held, and so does everything here (roomsOn / roomNights).
+export type StayPart = { room: string; segment: Segment; total: number; rent: number; fees: number; other: number; from?: string; to?: string }
+type Dated = { checkIn: string; checkOut: string; parts: StayPart[] }
+const _ms = (d: string) => Date.parse(d + 'T00:00:00Z'), _iso = (t: number) => new Date(t).toISOString().slice(0, 10)
+/** How many of a stay's rooms are held on the night `t` (ms, UTC midnight). */
+export function roomsOn(x: Dated, t: number): number { const d = _iso(t); let n = 0; for (const p of x.parts) if ((p.from || x.checkIn) <= d && d < (p.to || x.checkOut)) n++; return n }
+/** A stay's room nights inside [lo, hi) — each room on its own nights. */
+export function roomNights(x: Dated, lo: number, hi: number): number { let n = 0; for (const p of x.parts) n += partNights(x, p, lo, hi); return n }
+/** One room's nights inside [lo, hi). */
+export function partNights(x: Dated, p: StayPart, lo: number, hi: number): number { return Math.max(0, Math.round((Math.min(hi, _ms(p.to || x.checkOut)) - Math.max(lo, _ms(p.from || x.checkIn))) / 86400000)) }
 export type SegStay = {
   id: string; origin: 'cloudbeds' | 'guesty'; status: string; guest: string | null; checkIn: string; checkOut: string; nights: number
   source: string | null; bookedAt: string | null; balance: number | null; total: number; rent: number; fees: number; other: number; parts: StayPart[]
@@ -88,7 +98,7 @@ export async function segmentRooms(): Promise<{ rooms: SegRoom[]; botanica: Set<
 
 /** Stays touching [from, to] (cancelled included, by status), each split into rooms with a segment. */
 const nightsOf = (ci: string, co: string, n: any) => Math.max(1, num(n) || Math.round((Date.parse(co) - Date.parse(ci)) / 86400000))
-const CB_COLS = 'id,status,guest_name,check_in,check_out,nights,total,balance,source,room_names,booked_at'
+const CB_COLS = 'id,status,guest_name,check_in,check_out,nights,total,balance,source,room_names,booked_at,lines:raw->rooms'
 const GY_COLS = 'id,listing_id,status,check_in,check_out,nights,source,guest_name,created_at,accom:raw->money->>fareAccommodationAdjusted,clean:raw->money->>fareCleaning,items:raw->money->invoiceItems,balance:raw->money->>balanceDue'
 /**
  * One Cloudbeds reservation as a stay, cut by room. ALWAYS THE GARDEN'S (Jon, 2026-11-25, after Margaux saw two
@@ -106,7 +116,16 @@ function fromCb(r: any, botanica: Set<string>): SegStay | null {
   const fees = 0, total = rent
   // No room yet: it is the hotel's own booking until a room says otherwise.
   const k = Math.max(1, names.length)
-  const parts: StayPart[] = names.length ? names.map(nm => ({ room: nm, segment: 'garden' as Segment, total: total / k, rent: rent / k, fees: 0, other: other / k })) : [{ room: '', segment: 'garden', total, rent, fees, other }]
+  let parts: StayPart[] = names.length ? names.map(nm => ({ room: nm, segment: 'garden' as Segment, total: total / k, rent: rent / k, fees: 0, other: other / k })) : [{ room: '', segment: 'garden', total, rent, fees, other }]
+  // ROOM BY ROOM, EACH ON ITS OWN NIGHTS (2026-11-25, checked against the GM's Cloudbeds occupancy report: counting
+  // every room for the whole booking read 20 room nights high over 15 days; this matches it to the room). Cloudbeds
+  // gives each room line its own check-in and check-out. The money is shared by each line's nights.
+  const D10 = /^\d{4}-\d{2}-\d{2}$/
+  const lines = (Array.isArray(r.lines) ? r.lines : []).filter((e: any) => !/cancel|no_show/i.test(s(e?.roomStatus))).map((e: any) => ({ room: s(e?.roomName), a: s(e?.roomCheckIn).slice(0, 10) || ci, b: s(e?.roomCheckOut).slice(0, 10) || co })).filter((e: any) => D10.test(e.a) && D10.test(e.b) && e.b > e.a)
+  if (lines.length) {
+    const ln = lines.map((e: any) => Math.round((Date.parse(e.b) - Date.parse(e.a)) / 86400000)), sum = ln.reduce((a: number, b: number) => a + b, 0) || 1
+    parts = lines.map((e: any, i: number) => ({ room: e.room, segment: 'garden' as Segment, total: total * ln[i] / sum, rent: rent * ln[i] / sum, fees: 0, other: other * ln[i] / sum, ...(e.a !== ci || e.b !== co ? { from: e.a, to: e.b } : {}) }))
+  }
   return { id: s(r.id), origin: 'cloudbeds', status: s(r.status), guest: r.guest_name || null, checkIn: ci, checkOut: co, nights: nightsOf(ci, co, r.nights), source: r.source || null, bookedAt: r.booked_at || null, balance: r.balance != null ? num(r.balance) : null, total, rent, fees, other, parts, basis: net != null ? 'room' : 'gross' }
 }
 /** One Guesty Botanica reservation as a stay; null when Cloudbeds already holds it or it is not a booking. */

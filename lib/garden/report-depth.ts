@@ -5,7 +5,7 @@
 // Everything is counted night by night per room from lib/garden/segments (a stay crossing the edge of
 // the period, or sitting in rooms on both sides, is split), so the three columns always add up.
 import 'server-only'
-import { loadStays, narrow, leadDays, filterActive, type Scope, type SegRoom, type SegStay, type StayFilter, SEGMENT_LABEL } from './segments'
+import { loadStays, narrow, leadDays, filterActive, type Scope, type SegRoom, type SegStay, type StayFilter, SEGMENT_LABEL, roomNights, partNights } from './segments'
 import { channelName } from './revenue'
 
 const DAY = 86400000
@@ -31,7 +31,7 @@ function summary(all: { rooms: SegRoom[]; stays: SegStay[] }, scope: Scope, from
     // Length of stay is the WHOLE stay's nights, not the part inside the period (a 10-night stay that
     // overlaps the period by 2 nights is still a 10-night stay).
     losSum += x.nights; if (x.nights === 1) one++; if (x.nights >= 7) week++
-    a.stays++; a.nights += n * x.parts.length; a.revenue += (x.total / x.nights) * n; rent += (x.rent / x.nights) * n; fees += (x.fees / x.nights) * n; other += (x.other / x.nights) * n
+    a.stays++; a.nights += roomNights(x, lo, hi); a.revenue += (x.total / x.nights) * n; rent += (x.rent / x.nights) * n; fees += (x.fees / x.nights) * n; other += (x.other / x.nights) * n
     if (x.checkIn >= from && x.checkIn <= to) arrivals++
     if ((x.balance || 0) > 0) { owed += x.balance || 0; owedN++ }
   }
@@ -62,16 +62,17 @@ export async function gardenDepth(from: string, to: string, scope: Scope = 'all'
     const n = Math.max(0, Math.round((b - a) / DAY)); if (n <= 0) continue
     const k = channelName(x.source)
     const c = chan[k] = chan[k] || { ...agg(), lead: 0, leadN: 0, cancelled: 0, rent: 0, fees: 0, other: 0 }
-    const inWin = (x.total / x.nights) * n
-    c.stays++; c.nights += n * x.parts.length; c.revenue += inWin; c.rent += (x.rent / x.nights) * n; c.fees += (x.fees / x.nights) * n; c.other += (x.other / x.nights) * n
-    const L = los[bucket(x.nights, [1, 2, 3, 6, 13, 29])]; L.stays++; L.nights += n * x.parts.length; L.revenue += inWin
-    if (x.bookedAt) { const d = Math.round((ms(x.checkIn) - ms(String(x.bookedAt).slice(0, 10))) / DAY); if (d >= 0) { c.lead += d; c.leadN++; const B = lead[bucket(d, [0, 3, 7, 14, 30, 60])]; B.stays++; B.nights += n * x.parts.length; B.revenue += inWin } }
+    const inWin = (x.total / x.nights) * n, rn = roomNights(x, lo, hi)
+    c.stays++; c.nights += rn; c.revenue += inWin; c.rent += (x.rent / x.nights) * n; c.fees += (x.fees / x.nights) * n; c.other += (x.other / x.nights) * n
+    const L = los[bucket(x.nights, [1, 2, 3, 6, 13, 29])]; L.stays++; L.nights += rn; L.revenue += inWin
+    if (x.bookedAt) { const d = Math.round((ms(x.checkIn) - ms(String(x.bookedAt).slice(0, 10))) / DAY); if (d >= 0) { c.lead += d; c.leadN++; const B = lead[bucket(d, [0, 3, 7, 14, 30, 60])]; B.stays++; B.nights += rn; B.revenue += inWin } }
     for (const p of x.parts) {
-      const perNight = p.total / x.nights, rm = roomBy[p.room]
+      const own = Math.max(1, partNights(x, p, -Infinity, Infinity)), perNight = p.total / own, rm = roomBy[p.room]
+      const pa = Math.max(a, ms(p.from || x.checkIn)), pb = Math.min(b, ms(p.to || x.checkOut))
       const wk = rm?.wing || 'No room yet', tk = rm?.type || 'No room yet', rk = p.room || 'No room yet'
       const W = wing[wk] = wing[wk] || agg(), T = type[tk] = type[tk] || agg(), Rm = room[rk] = room[rk] || agg()
       W.stays++; T.stays++; Rm.stays++
-      for (let t = a; t < b; t += DAY) {
+      for (let t = pa; t < pb; t += DAY) {
         const m = iso(t).slice(0, 7), M = month[m] = month[m] || agg(), D = dow[new Date(t).getUTCDay()]
         M.nights++; M.revenue += perNight; D.nights++; D.revenue += perNight
         W.nights++; W.revenue += perNight; T.nights++; T.revenue += perNight; Rm.nights++; Rm.revenue += perNight
@@ -111,7 +112,7 @@ export async function gardenDepth(from: string, to: string, scope: Scope = 'all'
       const a = Math.max(lo, ms(x.checkIn)), b = Math.min(hi, ms(x.checkOut)), n = Math.max(0, Math.round((b - a) / DAY))
       if (n <= 0) return []
       const dead = !isLive(x), d = leadDays(x)
-      return x.parts.map(p => { const rm = roomBy[p.room]; return { c: channelName(x.source), l: x.nights, d, a: x.checkIn, b: x.bookedAt ? String(x.bookedAt).slice(0, 10) : null, s: p.segment, w: rm?.wing || 'No room yet', t: rm?.type || 'No room yet', n, r: Math.round((p.total / x.nights) * n * 100) / 100, e: Math.round((p.rent / x.nights) * n * 100) / 100, f: Math.round((p.fees / x.nights) * n * 100) / 100, p: Math.round((p.other / x.nights) * n * 100) / 100, x: dead ? 1 : 0, k: Math.round((1 / x.parts.length) * 1000) / 1000 } })
+      return x.parts.map(p => { const rm = roomBy[p.room], own = Math.max(1, partNights(x, p, -Infinity, Infinity)), pn = partNights(x, p, lo, hi); return { c: channelName(x.source), l: x.nights, d, a: x.checkIn, b: x.bookedAt ? String(x.bookedAt).slice(0, 10) : null, s: p.segment, w: rm?.wing || 'No room yet', t: rm?.type || 'No room yet', n: pn, r: Math.round((p.total / own) * pn * 100) / 100, e: Math.round((p.rent / own) * pn * 100) / 100, f: Math.round((p.fees / own) * pn * 100) / 100, p: Math.round((p.other / own) * pn * 100) / 100, x: dead ? 1 : 0, k: Math.round((1 / x.parts.length) * 1000) / 1000 } })
     }),
   }
 }

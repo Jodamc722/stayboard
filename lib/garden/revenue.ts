@@ -11,7 +11,7 @@
 import 'server-only'
 import { supabaseAdmin } from '../supabase-admin'
 import { cbGet, cloudbedsConfigured } from './cloudbeds'
-import { loadStays, loadBooked, narrow, filterActive, type Scope, type StayFilter } from './segments'
+import { loadStays, loadBooked, narrow, filterActive, type Scope, type StayFilter, roomNights, roomsOn } from './segments'
 
 const ymd = (d: Date) => d.toISOString().slice(0, 10)
 const addDays = (s: string, n: number) => ymd(new Date(Date.parse(s + 'T12:00:00Z') + n * 86400000))
@@ -49,7 +49,8 @@ function windowStats(live: any[], from: string, to: string, rooms: number) {
     const perNight = num(r.total) / (stayN * units)
     const a = Math.max(lo, Date.parse(r.check_in + 'T00:00:00Z')), b = Math.min(hi, Date.parse(r.check_out + 'T00:00:00Z'))
     const n = Math.max(0, Math.round((b - a) / 86400000))
-    if (n > 0) { nights += n * units; revenue += perNight * units * n; bookings++ }
+    // Room nights: each room on its own nights (a room move is one room a night, not two).
+    if (n > 0) { nights += Array.isArray(r.parts) ? roomNights({ checkIn: r.check_in, checkOut: r.check_out, parts: r.parts }, lo, hi) : n * units; revenue += perNight * units * n; bookings++ }
   }
   const days = Math.round((hi - lo) / 86400000)
   return { bookings, nights, revenue: Math.round(revenue), adr: nights ? Math.round(revenue / nights) : null, occupancy: rooms ? Math.round((nights / (rooms * days)) * 1000) / 10 : null, revpar: rooms ? Math.round(revenue / (rooms * days)) : null, days }
@@ -90,7 +91,7 @@ export async function gardenRevenue(opts: { from?: string; to?: string; ahead?: 
   const N = narrow(seg, scope, filter, channelName)
   const scoped = N.stays as any[]
   void prevQ
-  const asRow = (x: any) => ({ id: x.id, status: x.status, check_in: x.checkIn, check_out: x.checkOut, nights: x.nights, total: x.total, balance: x.balance, source: x.source, room_ids: x.parts.map((p: any) => p.room), room_names: x.rooms, guest_name: x.guest, booked_at: x.bookedAt, origin: x.origin, basis: x.basis, rent: x.rent, fees: x.fees, other: x.other })
+  const asRow = (x: any) => ({ id: x.id, status: x.status, check_in: x.checkIn, check_out: x.checkOut, nights: x.nights, total: x.total, balance: x.balance, source: x.source, room_ids: x.parts.map((p: any) => p.room), parts: x.parts, room_names: x.rooms, guest_name: x.guest, booked_at: x.bookedAt, origin: x.origin, basis: x.basis, rent: x.rent, fees: x.fees, other: x.other })
   // Sellable rooms per type: the physical (non-virtual) rooms Cloudbeds lists under it. The
   // calendar carries what is left per night, not the type's size, so the size comes from here.
   const RM = ((roomsQ.data || []) as any[]).filter(r => r.virtual !== true && r.virtual !== 'true')
@@ -123,10 +124,11 @@ export async function gardenRevenue(opts: { from?: string; to?: string; ahead?: 
       if (d < lo || d >= hi) continue
       const m = new Date(d).toISOString().slice(0, 7)
       const mm = month[m] = month[m] || { nights: 0, revenue: 0 }
-      const dd = day[new Date(d).toISOString().slice(0, 10)]; if (dd) { dd.nights += units; dd.revenue += perNight * units }
-      mm.nights += units; mm.revenue += perNight * units
-      c.nights += units; c.revenue += perNight * units
-      nights += units; revenue += perNight * units; rentW += num(r.rent) / stayN; feesW += num(r.fees) / stayN; otherW += num(r.other) / stayN
+      const u = Array.isArray(r.parts) ? roomsOn({ checkIn: r.check_in, checkOut: r.check_out, parts: r.parts }, d) : units
+      const dd = day[new Date(d).toISOString().slice(0, 10)]; if (dd) { dd.nights += u; dd.revenue += perNight * units }
+      mm.nights += u; mm.revenue += perNight * units
+      c.nights += u; c.revenue += perNight * units
+      nights += u; revenue += perNight * units; rentW += num(r.rent) / stayN; feesW += num(r.fees) / stayN; otherW += num(r.other) / stayN
     }
   }
   for (const r of live) { if (day[r.check_in]) day[r.check_in].arrivals++; if (day[r.check_out]) day[r.check_out].departures++ }

@@ -9,7 +9,7 @@
 // and how far ahead it was booked, for average length of stay and booking window.
 import 'server-only'
 import { supabaseAdmin } from '../supabase-admin'
-import { loadStays, narrow, leadDays, type Scope } from './segments'
+import { loadStays, narrow, leadDays, roomsOn, type Scope } from './segments'
 import { channelName } from './revenue'
 
 export type NightlyDay = { date: string; dow: string; inv: number; rns: number; rev: number; cleaning: number; arr: number; arrNights: number; arrLead: number; arrLeadCnt: number }
@@ -44,7 +44,7 @@ export async function gardenNightly(opts: { from?: string; to?: string } = {}) {
     for (const x of N.stays) {
       if (x.status === 'canceled' || x.status === 'no_show') continue
       const perNight = x.total / x.nights, cleanNight = x.fees / x.nights
-      for (let t = Math.max(lo, ms(x.checkIn)); t < Math.min(hi, ms(x.checkOut)); t += DAY) { const d = by[iso(t)]; if (!d) continue; d.rns += x.parts.length; d.rev += perNight; d.cleaning += cleanNight }
+      for (let t = Math.max(lo, ms(x.checkIn)); t < Math.min(hi, ms(x.checkOut)); t += DAY) { const d = by[iso(t)]; if (!d) continue; d.rns += roomsOn(x, t); d.rev += perNight; d.cleaning += cleanNight }
       const a = by[x.checkIn]
       if (a) { a.arr++; a.arrNights += x.nights; const L = leadDays(x); if (L != null) { a.arrLead += L; a.arrLeadCnt++ } }
     }
