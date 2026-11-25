@@ -70,7 +70,11 @@ async function run(req: NextRequest) {
     // Own try, like the rest. See lib/midstay-cancel.ts.
     let midstay: any = null
     try { const { runMidstayCancelWatch } = await import('@/lib/midstay-cancel'); const m = await runMidstayCancelWatch(); midstay = { found: m.found, posted: m.posted, held: m.held, error: m.error } } catch (e: any) { midstay = { error: String(e?.message || e).slice(0, 120) } }
-    return NextResponse.json({ ranAt: new Date().toISOString(), mode, reservations: n, salato, salatoEmail, folios, banned, midstay, elapsed_ms: Date.now() - started })
+    // THE CALENDAR LINK'S RETRY (Jon, 2026-11-25: "prevent failures … double bookings can disrupt everything"): a room
+    // whose Guesty ⇄ Cloudbeds write failed is tried again here every five minutes. Nothing pending → one settings read.
+    let calendarLink: any = null
+    try { const { retryPending } = await import('@/lib/garden/calendar-link'); calendarLink = await retryPending() } catch (e: any) { calendarLink = { error: String(e?.message || e).slice(0, 120) } }
+    return NextResponse.json({ ranAt: new Date().toISOString(), mode, reservations: n, salato, salatoEmail, folios, banned, midstay, calendarLink, elapsed_ms: Date.now() - started })
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 200) }, { status: 500 })
   }
