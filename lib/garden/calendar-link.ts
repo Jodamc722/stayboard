@@ -41,7 +41,7 @@
 import 'server-only'
 import { supabaseAdmin } from '../supabase-admin'
 import { getSettingFresh, setSetting } from '../app-settings'
-import { cbGet, cbPostV, cbDeleteV, getReservations } from './cloudbeds'
+import { cbGet, cbPostV, cbDeleteV } from './cloudbeds'
 import { botanicaListings } from './guesty-bridge'
 import { getMultiCalendar, guestyWrite, isOpsBlock, type MultiCalDay } from '../guesty'
 
@@ -149,17 +149,38 @@ export async function cbUnblock(blockId: string): Promise<void> {
   catch { await cbPostV('v1.3', 'deleteRoomBlock', { roomBlockID: blockId }) }
 }
 /** Cloudbeds' side for the whole property, read once and shared by every room in a run. */
-export type CbSide = { blocks: CbBlock[]; res: Awaited<ReturnType<typeof getReservations>>; at: number }
+export type CbRes = { id: string; status: string; checkIn: string | null; checkOut: string | null; roomNames: string[]; raw: any }
+export type CbSide = { blocks: CbBlock[]; res: CbRes[]; at: number }
+/**
+ * Cloudbeds bookings arriving OR departing in [from, to], read live. Both questions are asked at the same time and
+ * without guest details (the link needs rooms and dates only), which is what makes the instant pass quick. A full
+ * last page means the answer was cut short, and that is an error — never "no more bookings".
+ */
+async function cbStays(from: string, to: string): Promise<CbRes[]> {
+  const seen = new Map<string, CbRes>()
+  const pull = async (axis: Record<string, string>) => {
+    for (let page = 1; ; page++) {
+      if (page > 40) throw new Error('Cloudbeds has more bookings than the link reads in one go — nothing was changed.')
+      const { data } = await attempt('Cloudbeds getReservations', () => cbGet<any[]>('getReservations', { ...axis, includeAllRooms: 'true', pageNumber: page, pageSize: 100 }))
+      const rows = Array.isArray(data) ? data : []
+      for (const r of rows) { const id = s(r?.reservationID); if (id) seen.set(id, { id, status: s(r?.status).toLowerCase(), checkIn: s(r?.startDate).slice(0, 10) || null, checkOut: s(r?.endDate).slice(0, 10) || null, roomNames: (Array.isArray(r?.rooms) ? r.rooms : []).map((x: any) => s(x?.roomName)).filter(Boolean), raw: r }) }
+      if (rows.length < 100) break
+    }
+  }
+  await Promise.all([pull({ checkInFrom: from, checkInTo: to }), pull({ checkOutFrom: from, checkOutTo: to })])
+  // Bookings that come back with no room lines at all mean Cloudbeds left them off the answer: every room would look empty.
+  const all = Array.from(seen.values())
+  if (all.length && !all.some(x => Array.isArray(x.raw?.rooms) && x.raw.rooms.length)) throw new Error('Cloudbeds returned bookings without their rooms — nothing was changed.')
+  return Array.from(seen.values())
+}
 /**
  * Cloudbeds can only be asked for bookings by arrival date or by departure date, so a stay that began before the
  * window and ends after it would be missed by both questions. The window is therefore widened by `pad` days each
- * side before asking (the longest stay on the books is 28 nights; the pad is up to 120). A full page at the last
- * page means the answer was cut short: that is an error, never "no more bookings".
+ * side before asking (the longest stay on the books is 28 nights; the pad is 35 to 45).
  */
 export async function readCloudbeds(from: string, to: string, pad?: number): Promise<CbSide> {
-  const span = Math.round((ms(to) - ms(from)) / DAY), p = pad ?? Math.max(0, Math.min(120, 370 - span))
-  const [blocks, res] = await Promise.all([cbBlocks(from, to), attempt('Cloudbeds getReservations', () => getReservations({ from: iso(ms(from) - p * DAY), to: iso(ms(to) + (p + 1) * DAY) }))])
-  if (res.length >= 2900) throw new Error(`Cloudbeds returned ${res.length} bookings, which looks cut short — nothing was changed.`)
+  const span = Math.round((ms(to) - ms(from)) / DAY), p = pad ?? Math.max(0, Math.min(45, 370 - span))
+  const [blocks, res] = await Promise.all([cbBlocks(from, to), cbStays(iso(ms(from) - p * DAY), iso(ms(to) + (p + 1) * DAY))])
   return { blocks, res, at: Date.now() }
 }
 
