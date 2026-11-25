@@ -8,6 +8,7 @@
 // to anything it accepted, even when the re-read fails (Guesty retries non-2xx with backoff, and the poll and the
 // cron backfill anyway).
 import { NextRequest, NextResponse } from 'next/server'
+import { waitUntil } from '@vercel/functions'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { safeEqual } from '@/lib/signing'
 import { readWebhookSettings, verifySvix, noteEvent } from '@/lib/guesty-webhooks'
@@ -66,7 +67,15 @@ export async function POST(req: NextRequest) {
   // carried to its Cloudbeds room at once. Not a message event, so it ends here.
   if (/^(reservation\.(new|updated|created|canceled|cancelled)|reservation\.(created|updated)\.v2|listing\.calendar\.updated|calendar\.updated\.v2)$/i.test(event)) {
     const lid = String(body?.reservation?.listingId || body?.reservation?.listing?._id || body?.listingId || body?.listing?._id || body?.calendar?.[0]?.listingId || '')
-    try { const { onGuestyEvent } = await import('@/lib/garden/calendar-link'); const room = await onGuestyEvent(lid); return NextResponse.json({ ok: true, link: room || 'not a linked room' }) }
+    // The dates in the message are a hint about which nights to do first, nothing more: the room is read from both systems before a write.
+    const R = body?.reservation || {}, C = Array.isArray(body?.calendar) ? body.calendar.map((d: any) => String(d?.date || '').slice(0, 10)).filter(Boolean).sort() : []
+    const hint = { from: String(R.checkInDateLocalized || R.checkIn || C[0] || body?.startDate || '').slice(0, 10), to: String(R.checkOutDateLocalized || R.checkOut || C[C.length - 1] || body?.endDate || '').slice(0, 10) }
+    try {
+      const { onGuestyEvent } = await import('@/lib/garden/calendar-link')
+      const r = await onGuestyEvent(lid, hint)
+      if (r.rest) waitUntil(r.rest().catch(() => {}))          // the rest of the year, after Guesty has its answer
+      return NextResponse.json({ ok: true, link: r.room || 'not a linked room', did: r.fast?.length || 0 })
+    }
     catch (e: any) { return NextResponse.json({ ok: true, link: 'failed', error: String(e?.message || e).slice(0, 160) }) }
   }
   try {
