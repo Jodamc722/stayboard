@@ -49,6 +49,10 @@
       "schedule": "3 4,16 * * *"
     },
     {
+      "path": "/api/cron/brief-plans",
+      "schedule": "2 12 * * *"
+    },
+    {
       "path": "/api/cron/listing-watch",
       "schedule": "7 14 * * *"
     },

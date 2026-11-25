@@ -96,6 +96,8 @@ export const DESKS: Desk[] = [
       // Scheduling sits together (Jon, 2026-09-30: "Scheduler — all the scheduling features").
       { to: '/team', label: 'Week plan', hint: 'Who works which day, by trade and market, with the 14-day forecast' },
       // Open & Close (Jon, 2026-10-19): the opening and closing roadmap — gates with their real rows, carry-over, handover, print sheet.
+      // Briefs (Jon, 2026-11-25: "Need market plans… This should be in ops" · "We should have a briefs page").
+      { to: '/briefs', label: 'Briefs', hint: 'The morning plan for Broward, Miami, North and Customer Care: arrivals, VIPs, cleans, cleans not assigned, glitches, claims. Add a note or change it before it goes out' },
       { to: '/checklist', label: 'Open & Close', hint: 'Opening and closing roadmap: who is in, every clean has a person, extensions, arrivals, glitches — sign off, carry to tomorrow, print' },
       { to: '/maintenance', label: 'Maintenance', hint: 'Work orders, open Breezeway maintenance and glitches in one aged list', match: ['/requests'] },
       { to: '/blocked', label: 'Blocked units', hint: 'Units off the calendar right now, longest first, with the block note' },

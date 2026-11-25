@@ -58,7 +58,7 @@ type BriefCfg = {
 
 // One builder for every variant, so preview / test / cron can never drift apart. The briefs behind
 // the stored variant names: Miami/Broward → Field Run, full → Ops morning, GM → GM morning.
-const build = (v: BriefVariant, lang: BriefLang = 'en') => v === 'GM' ? buildGmMorning() : v === 'full' ? buildOpsDesk() : buildFieldRun(v, lang)
+const build = (v: BriefVariant, lang: BriefLang = 'en') => v === 'GM' ? buildGmMorning() : v === 'full' ? buildOpsDesk() : buildFieldRun(v as 'Miami' | 'Broward', lang)
 const langFor = (cfg: BriefCfg, v: BriefVariant): BriefLang =>
   v === 'Miami' ? asLang(cfg.lang?.miami) : v === 'Broward' ? asLang(cfg.lang?.broward) : 'en'
 const ALL_VARIANTS: BriefVariant[] = ['Miami', 'Broward', 'full', 'GM']

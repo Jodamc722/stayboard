@@ -1,0 +1,140 @@
+// THE BRIEFS — the plan each team reads in the morning, as one shape. Pure, so plain node can test it
+// (lib/__tests__/brief-plans.test.mjs). The data is lib/brief-plans.ts; the page is /briefs.
+//
+// Jon, 2026-11-25: "Need market plans. Meaning 1 for Broward, 1 for Miami and 1 for North. This should
+// be in ops." · "Briefs and we should create a new format. Arrivals, VIP, Cleans today, cleans not
+// assigned, etc. Make them super nice and easy to view." · "We need 1 for Customer Care as well.
+// Glitches, Claims, other important things." · "We should have a briefs page where we can see the
+// briefs" · "make changes before they go out, add notes, etc."
+//
+// So a brief is a PLAN: a few numbers, then sections of rows. The page and the email are two drawings
+// of the same plan, so what is read on the page is what is sent. Before it goes out a person can add a
+// note at the top, add lines of their own, and take a row out. Those edits belong to one day: the next
+// morning's plan starts clean.
+
+export type PlanKey = 'broward' | 'miami' | 'north' | 'care'
+export const PLAN_KEYS: PlanKey[] = ['broward', 'miami', 'north', 'care']
+export const PLAN_NAMES: Record<PlanKey, string> = { broward: 'Broward', miami: 'Miami', north: 'North', care: 'Customer Care' }
+export const PLAN_FOR: Record<PlanKey, string> = {
+  broward: 'The Broward field team', miami: 'The Miami field team', north: 'North: the vendor-run homes in Palm Beach County', care: 'The customer care team',
+}
+export const isPlanKey = (v: unknown): v is PlanKey => PLAN_KEYS.indexOf(v as PlanKey) >= 0
+
+export type Tone = 'red' | 'amber' | 'green' | 'none'
+export type PlanTag = { text: string; tone?: Tone | 'gold' | 'grey' }
+export type PlanRow = { id: string; title: string; meta?: string; note?: string; tags?: PlanTag[]; tone?: Tone; href?: string; hidden?: boolean; custom?: boolean; by?: string }
+export type PlanGroup = { name: string; meta?: string; rows: PlanRow[] }
+export type PlanSection = { key: string; title: string; tone?: Tone; rows?: PlanRow[]; groups?: PlanGroup[]; empty?: string; more?: string }
+export type PlanTile = { label: string; value: string; tone?: Tone }
+export type Plan = { key: PlanKey; name: string; forWhom: string; day: string; dayLabel: string; tiles: PlanTile[]; sections: PlanSection[]; note?: string; noteBy?: string; builtAt: string; board?: { label: string; href: string } }
+
+// ── What a person changed before it went out ────────────────────────────────────────────────────
+export type PlanExtra = { id: string; text: string; by: string }
+export type PlanEdits = { day: string; note: string; noteBy: string; hidden: string[]; extra: PlanExtra[] }
+export const emptyEdits = (day: string): PlanEdits => ({ day, note: '', noteBy: '', hidden: [], extra: [] })
+/** The edits as stored, for the day asked. Yesterday's edits are not today's: they come back empty. */
+export function cleanEdits(v: unknown, day: string): PlanEdits {
+  const x = (v && typeof v === 'object' ? v : {}) as any
+  if (String(x.day || '') !== day) return emptyEdits(day)
+  return {
+    day, note: String(x.note || '').slice(0, 1200), noteBy: String(x.noteBy || '').slice(0, 80),
+    hidden: (Array.isArray(x.hidden) ? x.hidden : []).map((h: any) => String(h)).filter(Boolean).slice(0, 300),
+    extra: (Array.isArray(x.extra) ? x.extra : []).map((e: any) => ({ id: String(e?.id || ''), text: String(e?.text || '').replace(/\s+/g, ' ').trim().slice(0, 300), by: String(e?.by || '').slice(0, 80) })).filter((e: PlanExtra) => e.id && e.text).slice(0, 20),
+  }
+}
+const rowsOf = (s: PlanSection): PlanRow[] => [...(s.rows || []), ...(s.groups || []).flatMap(g => g.rows)]
+/** How many rows a section holds (hidden ones not counted). */
+export const sectionCount = (s: PlanSection) => rowsOf(s).filter(r => !r.hidden).length
+export const ALSO = 'also'
+/**
+ * The plan with a person's edits on it. On the page (`forSend` false) a hidden row stays, marked, so it
+ * can be put back; in what is sent it is gone, and so is a group or section left with nothing. The
+ * numbers at the top are the day's facts and never change with an edit.
+ */
+export function applyEdits(plan: Plan, edits: PlanEdits | null, forSend = false): Plan {
+  const e = edits && edits.day === plan.day ? edits : emptyEdits(plan.day)
+  const hidden = new Set(e.hidden)
+  const mark = (r: PlanRow): PlanRow => (hidden.has(r.id) ? { ...r, hidden: true } : r)
+  const keep = (rows: PlanRow[]) => (forSend ? rows.map(mark).filter(r => !r.hidden) : rows.map(mark))
+  let sections: PlanSection[] = plan.sections.map(s => ({
+    ...s,
+    ...(s.rows ? { rows: keep(s.rows) } : {}),
+    ...(s.groups ? { groups: s.groups.map(g => ({ ...g, rows: keep(g.rows) })).filter(g => !forSend || g.rows.length) } : {}),
+  }))
+  if (forSend) sections = sections.filter(s => rowsOf(s).length || s.empty)
+  if (e.extra.length) {
+    const also: PlanSection = { key: ALSO, title: 'Also today', rows: e.extra.map(x => ({ id: x.id, title: x.text, custom: true, by: x.by, tone: 'amber' as Tone })) }
+    sections = [also, ...sections]
+  }
+  return { ...plan, sections, note: e.note || undefined, noteBy: e.note ? e.noteBy || undefined : undefined }
+}
+
+// ── Who gets it, and whether it goes out on its own ─────────────────────────────────────────────
+export type PlanSetting = { to: string[]; auto: boolean; lastSent?: { day: string; at: string; by: string; n: number } | null }
+export type PlanSettings = Record<PlanKey, PlanSetting>
+const EMAIL = /^[^@\s,;]+@[^@\s,;]+\.[^@\s,;]+$/
+/** Addresses out of what a person typed: commas, semicolons, spaces or new lines between them. */
+export function parseEmails(v: unknown): string[] {
+  const raw = Array.isArray(v) ? v.join(',') : String(v || '')
+  return Array.from(new Set(raw.split(/[\s,;]+/).map(x => x.trim().toLowerCase()).filter(x => EMAIL.test(x)))).slice(0, 40)
+}
+export function cleanSettings(v: unknown): PlanSettings {
+  const x = (v && typeof v === 'object' ? v : {}) as any
+  const one = (k: PlanKey): PlanSetting => ({ to: parseEmails(x[k]?.to), auto: !!x[k]?.auto, lastSent: x[k]?.lastSent && x[k].lastSent.day ? { day: String(x[k].lastSent.day), at: String(x[k].lastSent.at || ''), by: String(x[k].lastSent.by || ''), n: Number(x[k].lastSent.n) || 0 } : null })
+  return { broward: one('broward'), miami: one('miami'), north: one('north'), care: one('care') }
+}
+
+// ── The email ───────────────────────────────────────────────────────────────────────────────────
+// One white sheet on a warm page, the black masthead with the plan's name in serif, the day's numbers
+// in a row, then sections under gold small-cap titles. A row is a bold name, small-cap words for its
+// tags, one muted line under it, and a thin coloured rule at its left when it needs someone. The same
+// palette as the other morning briefs (lib/briefs/ui), kept here so this file imports nothing.
+const esc = (v: unknown) => String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+const INK = '#101114', GOLD = '#8C6D3A', RULE = '#E7E4DD', SOFT = '#FAF8F4', MUTED = '#6B6C72', FAINT = '#9A9BA0', RED = '#B42318', AMBER = '#B26A00', GREEN = '#1F7A4D'
+const F = `-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif`, SERIF = `Georgia,'Times New Roman',serif`
+const toneColor = (t?: string) => (t === 'red' ? RED : t === 'amber' ? AMBER : t === 'green' ? GREEN : t === 'gold' ? GOLD : MUTED)
+const tagHtml = (t: PlanTag) => `<span style="font:700 10px/1.4 ${F};letter-spacing:.08em;text-transform:uppercase;color:${toneColor(t.tone)};white-space:nowrap">${esc(t.text)}</span>`
+const safeUrl = (u?: string) => (u && /^https:\/\//.test(u) ? u : '')
+function rowHtml(r: PlanRow, n: number | null, first: boolean): string {
+  const bar = r.tone && r.tone !== 'none' ? toneColor(r.tone) : 'transparent'
+  const tags = (r.tags || []).map(tagHtml).join(' &nbsp;')
+  return `<tr><td style="width:3px;background:${bar};font-size:0;line-height:0">&nbsp;</td>`
+    + (n != null ? `<td valign="top" style="width:22px;padding:8px 0 8px 10px;font:700 11.5px/1.6 ${F};color:${FAINT};${first ? '' : `border-top:1px solid #F1EFEA`}">${n}</td>` : '')
+    + `<td valign="top" style="padding:8px 0 8px ${n != null ? '4px' : '11px'};font:13.5px/1.5 ${F};color:${INK};${first ? '' : `border-top:1px solid #F1EFEA`}"><b>${esc(r.title)}</b>${tags ? ' &nbsp;' + tags : ''}`
+    + (r.meta ? `<div style="font:12.5px/1.5 ${F};color:${MUTED}">${esc(r.meta)}</div>` : '')
+    + (r.note ? `<div style="font:12px/1.5 ${F};color:#6F5527">${esc(r.note)}</div>` : '')
+    + (r.custom && r.by ? `<div style="font:11.5px/1.5 ${F};color:${FAINT}">Added by ${esc(r.by)}</div>` : '')
+    + `</td></tr>`
+}
+const rowsTable = (rows: PlanRow[], numbered: boolean) => `<table role="presentation" width="100%" cellspacing="0" cellpadding="0">${rows.map((r, i) => rowHtml(r, numbered ? i + 1 : null, i === 0)).join('')}</table>`
+function sectionHtml(s: PlanSection): string {
+  const n = sectionCount(s)
+  const title = `<p style="margin:0 0 6px;font:700 10.5px/1.4 ${F};letter-spacing:.16em;text-transform:uppercase;color:${s.tone === 'red' && n ? RED : GOLD}">${esc(s.title)}${n ? ` <span style="font-weight:400;letter-spacing:.04em;color:${FAINT}">&middot; ${n}</span>` : ''}</p>`
+  let inner = ''
+  if (s.groups && s.groups.length) {
+    inner = s.groups.map((g, i) => `<p style="margin:${i ? 14 : 4}px 0 2px;font:14px/1.4 ${F};color:${INK}"><b>${esc(g.name)}</b>${g.meta ? ` <span style="font-size:12px;color:${MUTED}">&middot; ${esc(g.meta)}</span>` : ''}</p>` + rowsTable(g.rows, true)).join('')
+  } else if (s.rows && s.rows.length) inner = rowsTable(s.rows, false)
+  else inner = `<p style="margin:2px 0 0;font:13px/1.5 ${F};color:${MUTED}">${esc(s.empty || 'Nothing here today.')}</p>`
+  if (s.more) inner += `<p style="margin:6px 0 0;font:11.5px/1.5 ${F};color:${FAINT}">${esc(s.more)}</p>`
+  return `<div style="border-top:1px solid ${RULE};padding:18px 22px 16px">${title}${inner}</div>`
+}
+function tilesHtml(tiles: PlanTile[]): string {
+  if (!tiles.length) return ''
+  const per = 3, rows: string[] = []
+  for (let i = 0; i < tiles.length; i += per) {
+    rows.push(`<tr>${tiles.slice(i, i + per).map((t, j) => `<td valign="top" width="33%" style="padding:10px 8px 10px ${j ? '14px' : '0'};${j ? `border-left:1px solid ${RULE}` : ''}"><div style="font:700 10px/1.3 ${F};letter-spacing:.1em;text-transform:uppercase;color:${MUTED}">${esc(t.label)}</div><div style="font:27px/1.15 ${SERIF};margin-top:3px;color:${t.tone && t.tone !== 'none' && t.tone !== 'green' ? toneColor(t.tone) : INK}">${esc(t.value)}</div></td>`).join('')}</tr>`)
+  }
+  return `<div style="background:${SOFT};padding:8px 22px 6px"><table role="presentation" width="100%" cellspacing="0" cellpadding="0">${rows.join('')}</table></div>`
+}
+export const planSubject = (p: Plan) => `${p.name} plan · ${p.dayLabel}${p.tiles.length ? ' · ' + p.tiles.slice(0, 2).map(t => `${t.value} ${t.label.toLowerCase()}`).join(' · ') : ''}`
+/** The email. Pass a plan that already has its edits applied for sending (applyEdits(plan, edits, true)). */
+export function planEmailHtml(p: Plan): string {
+  const board = p.board && safeUrl(p.board.href) ? `<a href="${esc(p.board.href)}" style="color:#6F5527;font-weight:600;text-decoration:none">${esc(p.board.label)}</a>` : ''
+  const note = p.note ? `<div style="background:#FFF8E8;border-top:1px solid ${RULE};padding:14px 22px"><p style="margin:0 0 4px;font:700 10.5px/1.4 ${F};letter-spacing:.16em;text-transform:uppercase;color:${GOLD}">Note${p.noteBy ? ' from ' + esc(p.noteBy) : ''}</p><p style="margin:0;font:14.5px/1.55 ${F};color:${INK};white-space:pre-line">${esc(p.note)}</p></div>` : ''
+  return `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"></head><body style="margin:0;padding:0;background:#F4F2EE;font-family:${F};color:${INK}"><div style="max-width:600px;margin:0 auto;padding:16px 10px 28px"><div style="background:#fff;border:1px solid ${RULE};border-radius:14px;overflow:hidden">`
+    + `<div style="background:${INK};padding:20px 22px"><table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr><td style="font:700 11px/1.4 ${F};letter-spacing:.34em;color:#fff">STAY <span style="font-weight:400;letter-spacing:.22em;color:#B9BAC0">HOSPITALITY</span></td><td align="right" style="font:10.5px/1.4 ${F};letter-spacing:.12em;text-transform:uppercase;color:#B9BAC0;white-space:nowrap">${esc(p.dayLabel)}</td></tr></table>`
+    + `<p style="margin:16px 0 0;font:30px/1.1 ${SERIF};color:#fff">${esc(p.name)} plan</p><p style="margin:6px 0 0;font:12px/1.4 ${F};color:#B9BAC0">${esc(p.forWhom)}</p></div>`
+    + tilesHtml(p.tiles) + note + p.sections.map(sectionHtml).join('')
+    + `<div style="background:${SOFT};border-top:1px solid ${RULE};padding:14px 22px 16px;font:11px/1.6 ${F};color:${FAINT};text-align:center">${board ? board + '<br>' : ''}<span style="letter-spacing:.2em;text-transform:uppercase;font-size:9.5px">Lighthouse &middot; Stay Hospitality</span></div>`
+    + `</div></div></body></html>`
+}

@@ -220,6 +220,10 @@ export const AUTOMATIONS: AutomationDef[] = [
     what: 'Every 15 minutes: reads new posts in #vr-hkdamagereports, groups each line of text with its photos, works out the unit, what was found and the guest who just checked out, and puts it in the HK damage reports queue on the Claims board (Autofill claim / Not claimable) with a bell to whoever runs claims. Plain maintenance with no photos is filed straight to Handled.', receipt: 'automation_runs',
     notes: 'lib/hk-damage.ts. Photos need the Slack files:read permission.' },
   // ---- Ops ------------------------------------------------------------------------------------
+  { key: 'brief-plans', label: 'Briefs — the morning plans', area: 'ops', path: '/api/cron/brief-plans',
+    what: 'Emails each morning plan that is switched to send on its own (Broward, Miami, North, Customer Care), once a day at about 7 am ET, with the note and changes made on the Briefs page. Every plan ships off; each is turned on, and given its addresses, on the Briefs page.',
+    receipt: 'automation_runs',
+    notes: 'lib/brief-plans.ts. The Field Runs (ops-brief) still send as before until they are switched off in Users → App settings.' },
   { key: 'listing-watch', label: 'Listing watch — no cleaning fee, offline on Airbnb', area: 'ops', path: '/api/cron/listing-watch',
     what: 'Eve tells the leadership room which active properties have no cleaning fee in Guesty and which listings Airbnb is not selling (page removed, suspended, failed or disconnected). A listing is announced the first time it is seen, and both lists are repeated once each morning (about 9 am ET) while anything is on them; nothing is said when both are empty. Also runs after each listings sync.',
     receipt: 'automation_runs',

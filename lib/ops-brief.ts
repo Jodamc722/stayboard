@@ -43,7 +43,9 @@ function ymdET(d: Date): string {
 //   Miami / Broward → the Field Run for that market's coordinator
 //   full            → the Ops morning (the operations manager, every market)
 //   GM              → the GM morning (the owner: decisions, the numbers, labor)
-export type BriefVariant = 'Miami' | 'Broward' | 'full' | 'GM'
+// 'North' (Jon, 2026-11-25: "Need market plans… 1 for Broward, 1 for Miami and 1 for North"): the
+// Palm Beach cluster is vendor-run, so for North the vendor buildings are the market, not left out.
+export type BriefVariant = 'Miami' | 'Broward' | 'North' | 'full' | 'GM'
 
 // ---------------------------------------------------------------- data
 /** The lines of a reservation note worth a field crew's attention — never Lighthouse's own labels. */
@@ -156,7 +158,7 @@ export async function gather(variant: BriefVariant) {
     const m = meta[lid]
     if (!m) return variant === 'full' || variant === 'GM'
     if (variant === 'full' || variant === 'GM') return true
-    if (VENDOR.test(m.name) || VENDOR.test(m.building)) return false
+    if (variant !== 'North' && (VENDOR.test(m.name) || VENDOR.test(m.building))) return false
     return m.market === variant
   }
 
@@ -186,7 +188,7 @@ export async function gather(variant: BriefVariant) {
     const lid = String(t.reference_property_id)
     if (!inVariant(lid)) continue
     const unit = unitNameOf(t)
-    if (variant !== 'full' && VENDOR.test(unit)) continue
+    if (variant !== 'full' && variant !== 'North' && VENDOR.test(unit)) continue
     const ppl = (Array.isArray(t.assignees) ? t.assignees : []).map((a: any) => str(a?.name || a)).filter(Boolean)
     const assignee = ppl.join(', ') || '—  UNASSIGNED'
     const state: Clean['state'] = (/complete|finish|close|approv/.test(status) || t.finished_at) ? 'done'
@@ -229,7 +231,7 @@ export async function gather(variant: BriefVariant) {
       const lid = String(t.reference_property_id)
       if (!inVariant(lid)) continue
       const unit = unitNameOf(t)
-      if (variant !== 'full' && VENDOR.test(unit)) continue
+      if (variant !== 'full' && variant !== 'North' && VENDOR.test(unit)) continue
       const ppl = (Array.isArray(t.assignees) ? t.assignees : []).map((a: any) => str(a?.name || a)).filter(Boolean)
       // The crew this job belongs to, in the task's own words where it has them, else from the work.
       const raw = str(t.type_department).toLowerCase()
