@@ -38,6 +38,7 @@ import { getTimecards } from './homebase-labor'
 import { weekRoster } from './team-roster'
 import { MARKETS } from './segments'
 import { sendResendEmail } from './resend-send'
+import { sendGmail } from './gmail-send'
 import { stayEmail, escHtml } from './email-layout'
 import {
   listItems, playableUrls, assignmentsFor, personByKey, ensurePerson, complete as completeItem,
@@ -583,6 +584,23 @@ const EM = {
 const dayLabel = (ymd: string, lang: Lang) => new Date(ymd + 'T12:00:00').toLocaleDateString(lang === 'es' ? 'es-US' : 'en-US', { weekday: 'short', month: 'short', day: 'numeric' })
 const first = (n: string) => escHtml(str(n).split(' ')[0] || n)
 
+// HOW TEAM EMAIL GOES OUT (2026-11-25). The first real approval of a new hire form answered
+// "RESEND_API_KEY not set": these three emails were written for Resend alone, and production has no
+// Resend key (the same thing owner onboarding found on 2026-11-13). So they go the way the briefs and
+// the owner emails go: from a connected Google mailbox first, Resend only if that fails. When both
+// fail the reason for each is kept, so the person on Training → People can see why.
+const TEAM_SENDER = 'jon@stay-hospitality.com'
+async function teamMail(to: string[], subject: string, html: string): Promise<{ ok: boolean; error?: string }> {
+  let gmail = ''
+  try {
+    const g: { ok: boolean; error?: string } = await sendGmail({ fromEmail: TEAM_SENDER, to, subject, html, source: 'team-onboarding' })
+    if (g.ok) return { ok: true }
+    gmail = str(g.error) || 'not sent'
+  } catch (e: any) { gmail = str(e?.message || e) }
+  const r = await sendResendEmail({ to, subject, html })
+  return r.ok ? { ok: true } : { ok: false, error: `Gmail: ${gmail} · Resend: ${r.error || 'not sent'}`.slice(0, 300) }
+}
+
 export async function sendInvite(p: Person, by: string | null): Promise<{ ok: boolean; error?: string }> {
   if (!p.email) return { ok: false, error: 'No email on file.' }
   const t = EM[p.lang]
@@ -591,7 +609,7 @@ export async function sendInvite(p: Person, by: string | null): Promise<{ ok: bo
     paragraphs: t.inviteP.map(escHtml), list: t.inviteList.map(escHtml), ordered: true,
     cta: { label: t.open, url: pageUrl(p.code) }, ctaNote: escHtml(t.keep),
   })
-  const r = await sendResendEmail({ to: [p.email], subject: t.inviteSub, html })
+  const r = await teamMail([p.email], t.inviteSub, html)
   try { await supabaseAdmin().from('training_people').update({ invited_at: r.ok ? new Date().toISOString() : null, invite_error: r.ok ? null : (r.error || 'send failed') }).eq('key', p.key) } catch {}
   await logActivity(p.key, 'invited', { ok: r.ok, error: r.error || null }, by)
   return r
@@ -603,7 +621,7 @@ async function sendRetrain(p: Person, items: TrainingItem[], kind: string, due: 
     paragraphs: t.retrainP(dayLabel(due, p.lang)).map(escHtml), list: items.map(i => escHtml(p.lang === 'es' && i.title.es ? i.title.es : i.title.en)),
     cta: { label: t.open, url: pageUrl(p.code) },
   })
-  return sendResendEmail({ to: [p.email!], subject: t.retrainSub, html })
+  return teamMail([p.email!], t.retrainSub, html)
 }
 async function sendSchedule(p: { name: string; email: string; code: string; lang: Lang }, weekStart: string, market: string, days: ScheduleDay[]): Promise<{ ok: boolean; error?: string }> {
   const t = EM[p.lang]
@@ -613,7 +631,7 @@ async function sendSchedule(p: { name: string; email: string; code: string; lang
     table: { head: [p.lang === 'es' ? 'Día' : 'Day', p.lang === 'es' ? 'Turno' : 'Shift'], rows: days.map(d => [escHtml(dayLabel(d.date, p.lang)), escHtml(d.status === 'OFF' || d.status === 'REQ OFF' ? t.off : (d.shift || d.status))]) },
     cta: { label: t.open, url: pageUrl(p.code) },
   })
-  return sendResendEmail({ to: [p.email], subject: t.schedSub(dayLabel(weekStart, p.lang)), html })
+  return teamMail([p.email], t.schedSub(dayLabel(weekStart, p.lang)), html)
 }
 
 export { personByKey, ymdET }
