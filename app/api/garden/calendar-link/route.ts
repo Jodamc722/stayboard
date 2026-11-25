@@ -4,6 +4,8 @@
 //   POST { op: 'status', room, from, to }       → both calendars for one room, read live
 //        { op: 'reconcile', room, from, to, dry? } → make each side show what the other holds
 //        { op: 'refresh' }                      → reconcile every linked room
+//        { op: 'audit', days? }                 → compare every Botanica room across both systems (writes nothing)
+//        { op: 'retry' }                        → try the rooms a write failed on again
 //        { op: 'link', rooms: [...] }           → which rooms the link runs for
 //        { op: 'test_cb_block' | 'test_gy_block', room, from, to } → a block made "by hand" on one side, to test with
 //        { op: 'test_cb_unblock', blockId } · { op: 'test_gy_open', room, from, to }
@@ -12,7 +14,7 @@ import { requireGarden } from '@/lib/garden/access'
 import * as L from '@/lib/garden/calendar-link'
 
 export const dynamic = 'force-dynamic'
-export const maxDuration = 120
+export const maxDuration = 300
 
 export async function GET() {
   const gate = await requireGarden('setup', 'view')
@@ -32,6 +34,8 @@ export async function POST(req: NextRequest) {
     if (op === 'status') { const r = await L.readRoom(room, from, to); return NextResponse.json({ ok: true, room: r.room, nights: r.nights, blocks: r.blocks, ms: Date.now() - t0 }) }
     if (op === 'reconcile') return NextResponse.json({ ok: true, ...(await L.reconcileRoom(room, from, to, by, !!b?.dry)) })
     if (op === 'refresh') return NextResponse.json({ ok: true, ...(await L.reconcileLinked(by)), ms: Date.now() - t0 })
+    if (op === 'audit') return NextResponse.json({ ok: true, audit: await L.auditAll(Math.min(365, Math.max(7, Number(b?.days) || 120))) })
+    if (op === 'retry') return NextResponse.json({ ok: true, ...(await L.retryPending()) })
     if (op === 'enable_guesty_events') return NextResponse.json({ ok: true, ...(await L.enableGuestyEvents(by)) })
     if (op === 'test_cb_unblock') { await L.cbUnblock(String(b?.blockId || '')); return NextResponse.json({ ok: true, ms: Date.now() - t0 }) }
     if (op === 'link') return NextResponse.json({ ok: true, settings: await L.setLinkedRooms(Array.isArray(b?.rooms) ? b.rooms : [], by) })
