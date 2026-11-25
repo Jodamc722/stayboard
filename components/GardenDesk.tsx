@@ -1,4 +1,5 @@
 'use client'
+import { GardenCalendarLink } from '@/components/GardenCalendarLink'
 import { GardenAudit } from '@/components/GardenAudit'
 // THE GARDEN HOTEL DESK — the five tabs behind the Garden Hotel row, drawn with the lean kit.
 //
@@ -72,6 +73,7 @@ export function GardenDesk({ view, canEdit, owner }: { view: View; canEdit: bool
       {view === 'calls' ? <Calls d={data} canEdit={canEdit} reload={load} /> : null}
       {view === 'reports' ? <Reports d={data} range={range} setRange={setRange} /> : null}
       {view === 'setup' ? <Setup d={data} owner={owner} canEdit={canEdit} onSync={syncNow} busy={busy} /> : null}
+      {view === 'setup' ? <GardenCalendarLink owner={owner} /> : null}
       {view === 'setup' ? <GardenAudit canEdit={canEdit} /> : null}
     </>
   )
