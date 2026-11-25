@@ -260,19 +260,22 @@ const both = (n: Night) => n.guesty === 'booked' && n.cloudbeds === 'booked'
  */
 function plan(R: { nights: Night[]; ours: CbBlock[] }, from: string, to: string, protect = false) {
   const today = todayET()
-  const wantDates = R.nights.filter(n => gHolds(n) && !cHolds(n)).map(n => n.date)
+  // CLOUDBEDS REFUSES A BLOCK ON A NIGHT THAT IS ALREADY BLOCKED (tested live, 2026-11-25). So a night under one of
+  // the hotel's blanket blocks needs nothing from us and gets nothing; and a block of ours is never laid over another.
+  const wanted = new Set(R.nights.filter(n => gHolds(n) && (n.cloudbeds === 'free' || n.cloudbeds === 'ours')).map(n => n.date))
   const inWin = R.ours.filter(b => b.end >= from && b.start <= to)
   const edge = (b: CbBlock) => (b.start < from && from > today) || b.end > to
-  const cover = (bs: CbBlock[]) => { const c = new Set<string>(); for (const b of bs) for (let t = Math.max(ms(b.start), ms(from)); t <= Math.min(ms(b.end), ms(to)); t += DAY) c.add(iso(t)); return c }
-  const covered = cover(inWin), wanted = new Set(wantDates)
-  const same = covered.size === wanted.size && wantDates.every(d => covered.has(d)) && new Set(inWin.map(b => b.start + b.end)).size === inWin.length
-  const conflicts = R.nights.filter(both)
-  const close = runs(R.nights.filter(n => cHolds(n) && n.guesty === 'free').map(n => n.date))
-  if (protect) return { removeCb: [] as CbBlock[], addCb: runs(wantDates.filter(d => !covered.has(d))), close, open: [] as [string, string][], conflicts }
-  const keep = inWin.filter(edge), kept = cover(keep)
+  const nightsOf = (b: CbBlock) => { const c: string[] = []; for (let t = Math.max(ms(b.start), ms(from)); t <= Math.min(ms(b.end), ms(to)); t += DAY) c.push(iso(t)); return c }
+  // A block of ours is kept while every night of it is still held in Guesty. One that covers a night no longer held
+  // comes off, and what is still held under it goes straight back on. In `protect`, and for a block reaching outside
+  // the nights being looked at, nothing comes off.
+  const removeCb = protect ? [] : inWin.filter(b => !edge(b) && nightsOf(b).some(d => !wanted.has(d)))
+  const kept = new Set<string>(); for (const b of inWin) if (!removeCb.includes(b)) for (const d of nightsOf(b)) kept.add(d)
   return {
-    removeCb: same ? [] : inWin.filter(b => !edge(b)), addCb: same ? [] : runs(wantDates.filter(d => !kept.has(d))), close,
-    open: runs(R.nights.filter(n => !cHolds(n) && n.guesty === 'ours').map(n => n.date)), conflicts,
+    removeCb, addCb: runs(Array.from(wanted).filter(d => !kept.has(d))),
+    close: runs(R.nights.filter(n => cHolds(n) && n.guesty === 'free').map(n => n.date)),
+    open: protect ? [] as [string, string][] : runs(R.nights.filter(n => !cHolds(n) && n.guesty === 'ours').map(n => n.date)),
+    conflicts: R.nights.filter(both),
   }
 }
 const count = (rs: [string, string][]) => rs.reduce((a, [x, y]) => a + (ms(y) - ms(x)) / DAY + 1, 0)
@@ -315,16 +318,17 @@ export async function reconcileRoom(room: string, from: string, to: string, by: 
     const did = describe(room, p), conflicts = says(p)
     if (p.conflicts.length) await alert(`double|${room}|${p.conflicts[0].date}`, `Double booking: room ${room}, ${runs(p.conflicts.map(n => n.date)).map(([a, b]) => a === b ? a : `${a} → ${b}`).join(', ')}`, `Guesty and Cloudbeds each have a guest in room ${room} on ${p.conflicts.length === 1 ? 'this night' : 'these nights'}. ${p.conflicts[0].detail || ''} Nothing was changed; one of the two has to be moved.`)
     // THE CEILING, on anything that runs by itself: a run about to hold more than CLOSE_CAP nights on either side stops and asks a person.
-    const closing = count(p.close), blocking = count(p.addCb) - p.removeCb.reduce((a, b) => a + (ms(b.end) - ms(b.start)) / DAY + 1, 0)
-    if (!opts.person && (closing > CLOSE_CAP || blocking > CLOSE_CAP)) {
-      const what = closing > CLOSE_CAP ? `close ${closing} nights of the Guesty calendar` : `block ${blocking} more nights in Cloudbeds`
+    const closing = count(p.close), blocking = count(p.addCb) - p.removeCb.reduce((a, b) => a + (ms(b.end) - ms(b.start)) / DAY + 1, 0), releasing = p.removeCb.reduce((a, b) => a + (ms(b.end) - ms(b.start)) / DAY + 1, 0) - count(p.addCb) + count(p.open)
+    if (!opts.person && (closing > CLOSE_CAP || blocking > CLOSE_CAP || releasing > CLOSE_CAP)) {
+      const what = closing > CLOSE_CAP ? `close ${closing} nights of the Guesty calendar` : blocking > CLOSE_CAP ? `block ${blocking} more nights in Cloudbeds` : `release ${releasing} nights it was holding`
       await alert(`cap|${room}|${from}`, `Calendar link stopped: room ${room}`, `It was about to ${what} for room ${room}, more than the ${CLOSE_CAP} it may do by itself in one go. Nothing was written. If that is right (a newly linked room, a long hold), open Cloudbeds & feeds and press Refresh now; a person's Refresh has no ceiling.`)
       throw new Error(`Would ${what} (ceiling ${CLOSE_CAP}) — nothing was written.`)
     }
     const cbRoom = R.room.virtualId || R.room.physicalId!
-    // New blocks go on BEFORE old ones come off, so a night is never open in between.
-    for (const [a, b] of p.addCb) await attempt(`Cloudbeds block ${room} ${a}→${b}`, () => cbBlockRoom(cbRoom, a, b, `${MARK} · held in Guesty`))
+    // Cloudbeds will not take two blocks on one night, so a block that has to shrink comes off first and what is still
+    // held goes straight back on (about a second). If that second step fails the room is pending and retried.
     for (const b of p.removeCb) await attempt(`Cloudbeds unblock ${room} ${b.start}→${b.end}`, () => cbUnblock(b.id))
+    for (const [a, b] of p.addCb) await attempt(`Cloudbeds block ${room} ${a}→${b}`, () => cbBlockRoom(cbRoom, a, b, `${MARK} · held in Guesty`))
     for (const [a, b] of p.close) await attempt(`Guesty close ${room} ${a}→${b}`, () => gyBlock(R.room.listingId, a, b, `${MARK} · held in Cloudbeds`))
     for (const [a, b] of p.open) await attempt(`Guesty open ${room} ${a}→${b}`, () => gyOpen(R.room.listingId, a, b))
     let nights = R.nights, verified = true
