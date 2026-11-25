@@ -64,7 +64,7 @@ export type Pending = { since: string; tries: number; error: string }
 export type AuditItem = { room: string; from: string; to: string; kind: 'double' | 'guesty_open' | 'cloudbeds_open' | 'drift'; detail: string }
 export type Audit = { at: string; rooms: number; nights: number; ok: boolean; counts: Record<string, number>; items: AuditItem[]; errors: string[]; ms: number }
 export type LinkSettings = { rooms: string[]; ignore: string[]; log: { at: string; room: string; what: string; by: string }[]; alertTo: string[]; alerted: string[]; pending: Record<string, Pending>; audit: Audit | null }
-export type LinkedRoom = { room: string; listingId: string; listingName: string; virtualId: string | null; physicalId: string | null }
+export type LinkedRoom = { room: string; listingId: string; listingName: string; virtualId: string | null; physicalId: string | null; virtualTypeId: string | null }
 export type Night = { date: string; guesty: 'free' | 'booked' | 'blocked' | 'ours'; cloudbeds: 'free' | 'booked' | 'blocked' | 'ours' | 'ignored'; detail?: string }
 
 export async function linkSettings(): Promise<LinkSettings> {
@@ -90,10 +90,10 @@ export async function setLinkedRooms(rooms: string[], by: string): Promise<LinkS
 
 /** room number → the Guesty listing and the two Cloudbeds rooms. Only rooms that have a Botanica listing. */
 export async function roomMap(): Promise<Record<string, LinkedRoom>> {
-  const [units, { data }] = await Promise.all([botanicaListings(), supabaseAdmin().from('garden_rooms').select('id,name,virtual:raw->>isVirtual')])
+  const [units, { data }] = await Promise.all([botanicaListings(), supabaseAdmin().from('garden_rooms').select('id,name,room_type_id,virtual:raw->>isVirtual')])
   const out: Record<string, LinkedRoom> = {}
-  for (const u of units) { const n = num(u.name); if (n) out[n] = { room: n, listingId: u.id, listingName: u.name, virtualId: null, physicalId: null } }
-  for (const r of ((data || []) as any[])) { const o = out[s(r.name)]; if (!o) continue; if (r.virtual === 'true' || r.virtual === true) o.virtualId = s(r.id); else o.physicalId = s(r.id) }
+  for (const u of units) { const n = num(u.name); if (n) out[n] = { room: n, listingId: u.id, listingName: u.name, virtualId: null, physicalId: null, virtualTypeId: null } }
+  for (const r of ((data || []) as any[])) { const o = out[s(r.name)]; if (!o) continue; if (r.virtual === 'true' || r.virtual === true) { o.virtualId = s(r.id); o.virtualTypeId = s(r.room_type_id) || s(r.id).replace(/-\d+$/, '') || null } else o.physicalId = s(r.id) }
   return out
 }
 
@@ -149,10 +149,18 @@ export async function cbUnblock(blockId: string): Promise<void> {
   catch { await cbPostV('v1.3', 'deleteRoomBlock', { roomBlockID: blockId }) }
 }
 /** Cloudbeds' side for the whole property, read once and shared by every room in a run. */
-export type CbSide = { blocks: CbBlock[]; res: Awaited<ReturnType<typeof getReservations>> }
-export async function readCloudbeds(from: string, to: string): Promise<CbSide> {
-  const [blocks, res] = await Promise.all([cbBlocks(from, to), attempt('Cloudbeds getReservations', () => getReservations({ from, to: iso(ms(to) + DAY) }))])
-  return { blocks, res }
+export type CbSide = { blocks: CbBlock[]; res: Awaited<ReturnType<typeof getReservations>>; at: number }
+/**
+ * Cloudbeds can only be asked for bookings by arrival date or by departure date, so a stay that began before the
+ * window and ends after it would be missed by both questions. The window is therefore widened by `pad` days each
+ * side before asking (the longest stay on the books is 28 nights; the pad is up to 120). A full page at the last
+ * page means the answer was cut short: that is an error, never "no more bookings".
+ */
+export async function readCloudbeds(from: string, to: string, pad?: number): Promise<CbSide> {
+  const span = Math.round((ms(to) - ms(from)) / DAY), p = pad ?? Math.max(0, Math.min(120, 370 - span))
+  const [blocks, res] = await Promise.all([cbBlocks(from, to), attempt('Cloudbeds getReservations', () => getReservations({ from: iso(ms(from) - p * DAY), to: iso(ms(to) + (p + 1) * DAY) }))])
+  if (res.length >= 2900) throw new Error(`Cloudbeds returned ${res.length} bookings, which looks cut short — nothing was changed.`)
+  return { blocks, res, at: Date.now() }
 }
 
 // ── Guesty ──────────────────────────────────────────────────────────────────────────────────────
@@ -176,7 +184,35 @@ function runs(dates: string[]): [string, string][] {
   return out
 }
 
-type Pre = { cb?: CbSide; gy?: GySide; map?: Record<string, LinkedRoom>; st?: LinkSettings }
+type Pre = { cb?: CbSide; gy?: GySide; map?: Record<string, LinkedRoom>; st?: LinkSettings; pad?: number }
+/** How a run behaves. person: someone pressed the button (no ceiling). protect: only ever adds blocks and closes nights, never releases. */
+export type RunOpts = { person?: boolean; protect?: boolean }
+const RES_KEYS = ['r', 'reserved', 'reservation', 'booked']
+/** A Guesty night with a guest in it, whether or not Guesty attached the reservation id to the day. */
+const gyBooked = (g: MultiCalDay) => !!g.reservationId || g.status === 'booked' || g.status === 'reserved' || Object.keys(g.blocks || {}).some(k => RES_KEYS.includes(k.toLowerCase()) && !!(g.blocks as any)[k])
+type Stay = { id: string; from: string; to: string; unassigned: boolean }
+/**
+ * The Cloudbeds bookings that hold THIS room, taken from each booking's own room lines (a booking can hold several
+ * rooms, each with its own dates). A line counts when it names either of the room's two Cloudbeds ids, or the room
+ * number, or — for a booking not yet given a room — the virtual room's own room type, which has only this room in it.
+ */
+function staysFor(r: LinkedRoom, cb: CbSide): Stay[] {
+  const ids = [r.virtualId, r.physicalId].filter(Boolean) as string[], out: Stay[] = []
+  for (const x of cb.res) {
+    if (x.status === 'canceled' || x.status === 'cancelled' || x.status === 'no_show') continue
+    const lines: any[] = Array.isArray((x as any).raw?.rooms) ? (x as any).raw.rooms : []
+    if (!lines.length) { if ((x.roomNames || []).map(String).includes(r.room) && x.checkIn && x.checkOut) out.push({ id: x.id, from: x.checkIn, to: x.checkOut, unassigned: false }); continue }
+    for (const e of lines) {
+      if (/cancel|no_show/i.test(s(e?.roomStatus))) continue
+      const rid = s(e?.roomID), named = (rid && ids.includes(rid)) || (s(e?.roomName) && s(e?.roomName) === r.room)
+      const byType = !rid && !s(e?.roomName) && ((!!r.virtualTypeId && s(e?.roomTypeID) === r.virtualTypeId) || s(e?.roomTypeName) === r.room)
+      if (!named && !byType) continue
+      const a = s(e?.roomCheckIn).slice(0, 10) || x.checkIn, b = s(e?.roomCheckOut).slice(0, 10) || x.checkOut
+      if (a && b && D.test(a) && D.test(b)) out.push({ id: x.id, from: a, to: b, unassigned: byType })
+    }
+  }
+  return out
+}
 /** Both calendars for one room, night by night, read live from both systems. Throws if either side answers short. */
 export async function readRoom(room: string, from: string, to: string, pre?: Pre): Promise<{ room: LinkedRoom; nights: Night[]; blocks: CbBlock[]; ours: CbBlock[] }> {
   if (!D.test(from) || !D.test(to) || to < from) throw new Error('from and to (YYYY-MM-DD) are needed')
@@ -186,24 +222,27 @@ export async function readRoom(room: string, from: string, to: string, pre?: Pre
   const cbIds = [r.virtualId, r.physicalId].filter(Boolean) as string[]
   if (!cbIds.length) throw new Error(`Room ${room} was not found in Cloudbeds.`)
   const st = pre?.st || await linkSettings()
-  const [cb, gy] = await Promise.all([pre?.cb ? Promise.resolve(pre.cb) : readCloudbeds(from, to), pre?.gy ? Promise.resolve(pre.gy) : attempt('Guesty calendar', () => readGuesty([r.listingId], from, to))])
+  const want = Math.round((ms(to) - ms(from)) / DAY) + 1
+  const full = (g?: GySide) => Object.keys(g?.[r.listingId] || {}).filter(d => d >= from && d <= to).length >= want
+  // A shared Guesty read that is missing this room's nights is not trusted: the room is read on its own instead.
+  const [cb, gy] = await Promise.all([pre?.cb ? Promise.resolve(pre.cb) : readCloudbeds(from, to, pre?.pad), pre?.gy && full(pre.gy) ? Promise.resolve(pre.gy) : attempt('Guesty calendar', async () => { const g = await readGuesty([r.listingId], from, to); if (!full(g)) throw new Error(`Guesty answered ${Object.keys(g[r.listingId] || {}).length} of ${want} nights for room ${room} — nothing was changed`); return g })])
   const days = gy[r.listingId] || {}
   // A SHORT ANSWER IS NOT AN EMPTY CALENDAR. Guesty must have a day for every night asked for; if it does not,
   // the read failed, and acting on it would take our Cloudbeds blocks off nights that are really booked.
-  const want = Math.round((ms(to) - ms(from)) / DAY) + 1, got = Object.keys(days).filter(d => d >= from && d <= to).length
-  if (got < want) throw new Error(`Guesty answered ${got} of ${want} nights for room ${room} — nothing was changed.`)
+  if (!full(gy)) throw new Error(`Guesty answered short for room ${room} — nothing was changed.`)
   const blocks = cb.blocks.filter(b => b.roomIds.some(id => cbIds.includes(id)))
-  const stays = cb.res.filter(x => x.status !== 'canceled' && x.status !== 'no_show' && (x.roomNames || []).map(String).includes(room) && x.checkIn && x.checkOut)
+  const stays = staysFor(r, cb)
   const ignored = (b: CbBlock) => st.ignore.some(x => x && b.reason.toLowerCase().includes(x.toLowerCase()))
   const nights: Night[] = []
   for (let t = ms(from); t <= ms(to); t += DAY) {
     const date = iso(t), g = days[date]
     const gOurs = isOurs(g.note) || g.refs.some(x => isOurs(x.note))
-    const guesty: Night['guesty'] = g.reservationId ? 'booked' : gOurs ? 'ours' : isOpsBlock(g) ? 'blocked' : 'free'
-    const stay = stays.find(x => x.checkIn! <= date && x.checkOut! > date)
+    const gb = gyBooked(g)
+    const guesty: Night['guesty'] = gb ? 'booked' : gOurs ? 'ours' : isOpsBlock(g) ? 'blocked' : 'free'
+    const stay = stays.find(x => x.from <= date && x.to > date)
     const on = blocks.filter(b => b.start <= date && b.end >= date)
     const cloudbeds: Night['cloudbeds'] = stay ? 'booked' : on.some(b => !isOurs(b.reason) && !ignored(b)) ? 'blocked' : on.some(b => isOurs(b.reason)) ? 'ours' : on.length ? 'ignored' : 'free'
-    nights.push({ date, guesty, cloudbeds, detail: [stay ? `Cloudbeds booking ${stay.id}` : '', on.map(b => `Cloudbeds block "${b.reason || b.type}"`).join(', '), g.reservationId ? 'Guesty booking' : guesty === 'blocked' ? `Guesty block${g.refs[0]?.reason ? ' "' + g.refs[0].reason + '"' : ''}` : ''].filter(Boolean).join(' · ') || undefined })
+    nights.push({ date, guesty, cloudbeds, detail: [stay ? `Cloudbeds booking ${stay.id}${stay.unassigned ? ' (no room given yet)' : ''}` : '', on.map(b => `Cloudbeds block "${b.reason || b.type}"`).join(', '), gb ? 'Guesty booking' : guesty === 'blocked' ? `Guesty block${g.refs[0]?.reason ? ' "' + g.refs[0].reason + '"' : ''}` : ''].filter(Boolean).join(' · ') || undefined })
   }
   return { room: r, nights, blocks, ours: blocks.filter(b => isOurs(b.reason)) }
 }
@@ -213,21 +252,30 @@ const cHolds = (n: Night) => n.cloudbeds === 'booked' || n.cloudbeds === 'blocke
 // A DOUBLE BOOKING is a guest on each side for the same night. A booking on one side and a block made by hand on
 // the other is the opposite: somebody already closed it, which is what the link would have done.
 const both = (n: Night) => n.guesty === 'booked' && n.cloudbeds === 'booked'
-/** What the rule says should be done for these nights (nothing is done here). */
-function plan(R: { nights: Night[]; ours: CbBlock[] }, from: string, to: string) {
-  const want = runs(R.nights.filter(n => gHolds(n) && !cHolds(n)).map(n => n.date))
-  // Our blocks, cut to the window being looked at: a block reaching outside it is left alone unless a night inside changed.
+/**
+ * What the rule says should be done for these nights (nothing is done here).
+ * `protect` (the instant pass over a few nights): only ever ADD — block Cloudbeds, close Guesty. Releasing waits for
+ * the whole-year pass, which sees everything. A block of ours that reaches outside the nights being looked at is
+ * never removed here either: taking it off would open nights nobody looked at.
+ */
+function plan(R: { nights: Night[]; ours: CbBlock[] }, from: string, to: string, protect = false) {
+  const today = todayET()
+  const wantDates = R.nights.filter(n => gHolds(n) && !cHolds(n)).map(n => n.date)
   const inWin = R.ours.filter(b => b.end >= from && b.start <= to)
-  const covered = new Set<string>(); for (const b of inWin) for (let t = Math.max(ms(b.start), ms(from)); t <= Math.min(ms(b.end), ms(to)); t += DAY) covered.add(iso(t))
-  const wanted = new Set<string>(); for (const [a, b] of want) for (let t = ms(a); t <= ms(b); t += DAY) wanted.add(iso(t))
-  const sameCb = covered.size === wanted.size && Array.from(wanted).every(d => covered.has(d)) && new Set(inWin.map(b => b.start + b.end)).size === inWin.length
+  const edge = (b: CbBlock) => (b.start < from && from > today) || b.end > to
+  const cover = (bs: CbBlock[]) => { const c = new Set<string>(); for (const b of bs) for (let t = Math.max(ms(b.start), ms(from)); t <= Math.min(ms(b.end), ms(to)); t += DAY) c.add(iso(t)); return c }
+  const covered = cover(inWin), wanted = new Set(wantDates)
+  const same = covered.size === wanted.size && wantDates.every(d => covered.has(d)) && new Set(inWin.map(b => b.start + b.end)).size === inWin.length
+  const conflicts = R.nights.filter(both)
+  const close = runs(R.nights.filter(n => cHolds(n) && n.guesty === 'free').map(n => n.date))
+  if (protect) return { removeCb: [] as CbBlock[], addCb: runs(wantDates.filter(d => !covered.has(d))), close, open: [] as [string, string][], conflicts }
+  const keep = inWin.filter(edge), kept = cover(keep)
   return {
-    removeCb: sameCb ? [] : inWin, addCb: sameCb ? [] : want,
-    close: runs(R.nights.filter(n => cHolds(n) && n.guesty === 'free').map(n => n.date)),
-    open: runs(R.nights.filter(n => !cHolds(n) && n.guesty === 'ours').map(n => n.date)),
-    conflicts: R.nights.filter(both),
+    removeCb: same ? [] : inWin.filter(b => !edge(b)), addCb: same ? [] : runs(wantDates.filter(d => !kept.has(d))), close,
+    open: runs(R.nights.filter(n => !cHolds(n) && n.guesty === 'ours').map(n => n.date)), conflicts,
   }
 }
+const count = (rs: [string, string][]) => rs.reduce((a, [x, y]) => a + (ms(y) - ms(x)) / DAY + 1, 0)
 
 async function setPending(room: string, error: string | null) {
   await patch(c => { const p = { ...c.pending }; if (error == null) delete p[room]; else p[room] = { since: p[room]?.since || new Date().toISOString(), tries: (p[room]?.tries || 0) + 1, error: error.slice(0, 240) }; return { pending: p } }).catch(() => null)
@@ -244,21 +292,34 @@ async function alert(subject: string, title: string, body: string): Promise<void
 /**
  * Make each side show what the other holds, for one room. `dry` only says what it would do.
  * Locked per room, every write retried, the result read back; a failure marks the room pending and tells someone.
+ *
+ * A run handed a read made a moment ago (one read shared by every room in a pass) may use it to decide there is
+ * NOTHING to do, or to ADD protection. It may never RELEASE on it: before a block comes off or a night reopens,
+ * both systems are read again inside the lock.
  */
-export async function reconcileRoom(room: string, from: string, to: string, by: string, dry = false, pre?: Pre): Promise<{ room: string; did: string[]; conflicts: string[]; nights: Night[]; ms: number; verified?: boolean }> {
-  const t0 = Date.now()
-  if (dry) { const R = await readRoom(room, from, to, pre), p = plan(R, from, to); return { room, did: describe(room, p), conflicts: p.conflicts.map(n => `${n.date}: a booking on both sides (${n.detail || 'see both calendars'})`), nights: R.nights, ms: Date.now() - t0 } }
+export async function reconcileRoom(room: string, from: string, to: string, by: string, dry = false, pre?: Pre, opts: RunOpts = {}): Promise<{ room: string; did: string[]; conflicts: string[]; nights: Night[]; ms: number; verified?: boolean }> {
+  const t0 = Date.now(), base: Pre = { map: pre?.map, st: pre?.st, pad: opts.protect ? 35 : undefined }
+  const says = (p: ReturnType<typeof plan>) => p.conflicts.map(n => `${n.date}: a booking on both sides (${n.detail || 'see both calendars'})`)
+  if (dry) { const R = await readRoom(room, from, to, pre), p = plan(R, from, to, opts.protect); return { room, did: describe(room, p), conflicts: says(p), nights: R.nights, ms: Date.now() - t0 } }
+  // The shared read, if it is under a minute old: when it shows nothing to do and no double booking, the room is done without a lock or a write.
+  const shared = pre?.cb && pre?.gy && Date.now() - pre.cb.at < 60_000 ? pre : undefined
+  if (shared) {
+    try { const R = await readRoom(room, from, to, shared), p = plan(R, from, to, opts.protect); if (!describe(room, p).length && !p.conflicts.length) return { room, did: [], conflicts: [], nights: R.nights, ms: Date.now() - t0, verified: true } }
+    catch { /* the room is read on its own below */ }
+  }
   if (!(await lock(room))) { await setPending(room, 'busy: another run held the room for 20 seconds'); throw new Error(`Room ${room} is busy; it will be retried.`) }
   try {
     // Inside the lock the read is always fresh: what was read before the lock may be what the other run just changed.
-    const R = await readRoom(room, from, to, pre?.map || pre?.st ? { map: pre.map, st: pre.st } : undefined)
-    const p = plan(R, from, to)
-    const did = describe(room, p), conflicts = p.conflicts.map(n => `${n.date}: a booking on both sides (${n.detail || 'see both calendars'})`)
+    const R = await readRoom(room, from, to, base)
+    const p = plan(R, from, to, opts.protect)
+    const did = describe(room, p), conflicts = says(p)
     if (p.conflicts.length) await alert(`double|${room}|${p.conflicts[0].date}`, `Double booking: room ${room}, ${runs(p.conflicts.map(n => n.date)).map(([a, b]) => a === b ? a : `${a} → ${b}`).join(', ')}`, `Guesty and Cloudbeds each have a guest in room ${room} on ${p.conflicts.length === 1 ? 'this night' : 'these nights'}. ${p.conflicts[0].detail || ''} Nothing was changed; one of the two has to be moved.`)
-    const closing = p.close.reduce((a, [x, y]) => a + (ms(y) - ms(x)) / DAY + 1, 0)
-    if (closing > CLOSE_CAP) {
-      await alert(`cap|${room}|${from}`, `Calendar link stopped: room ${room}`, `It was about to close ${closing} nights of the Guesty calendar for room ${room}, more than the ${CLOSE_CAP} it may close in one go. Nothing was written. If Cloudbeds really holds those nights, check the room and press Refresh.`)
-      throw new Error(`Would close ${closing} Guesty nights (ceiling ${CLOSE_CAP}) — nothing was written.`)
+    // THE CEILING, on anything that runs by itself: a run about to hold more than CLOSE_CAP nights on either side stops and asks a person.
+    const closing = count(p.close), blocking = count(p.addCb) - p.removeCb.reduce((a, b) => a + (ms(b.end) - ms(b.start)) / DAY + 1, 0)
+    if (!opts.person && (closing > CLOSE_CAP || blocking > CLOSE_CAP)) {
+      const what = closing > CLOSE_CAP ? `close ${closing} nights of the Guesty calendar` : `block ${blocking} more nights in Cloudbeds`
+      await alert(`cap|${room}|${from}`, `Calendar link stopped: room ${room}`, `It was about to ${what} for room ${room}, more than the ${CLOSE_CAP} it may do by itself in one go. Nothing was written. If that is right (a newly linked room, a long hold), open Cloudbeds & feeds and press Refresh now; a person's Refresh has no ceiling.`)
+      throw new Error(`Would ${what} (ceiling ${CLOSE_CAP}) — nothing was written.`)
     }
     const cbRoom = R.room.virtualId || R.room.physicalId!
     // New blocks go on BEFORE old ones come off, so a night is never open in between.
@@ -269,7 +330,7 @@ export async function reconcileRoom(room: string, from: string, to: string, by: 
     let nights = R.nights, verified = true
     if (did.length) {
       // READ IT BACK. What was written has to be there; if the rule would still do something, it did not take.
-      const after = await readRoom(room, from, to, pre?.map || pre?.st ? { map: pre.map, st: pre.st } : undefined), left = plan(after, from, to)
+      const after = await readRoom(room, from, to, base), left = plan(after, from, to, opts.protect)
       nights = after.nights
       verified = !left.addCb.length && !left.removeCb.length && !left.close.length && !left.open.length
       await note(room, [...did, ...conflicts.map(c => 'DOUBLE BOOKING ' + c), verified ? '' : 'NOT CONFIRMED on read-back'].filter(Boolean).join(' · '), by)
@@ -291,17 +352,22 @@ function describe(room: string, p: ReturnType<typeof plan>): string[] {
   ]
 }
 
-/** Every linked room over [from, to] — the Refresh button, the half-hourly safety net and the Cloudbeds trigger. */
-export async function reconcileLinked(by: string, days = HORIZON_DAYS, window?: { from: string; to: string }): Promise<{ rooms: number; did: string[]; conflicts: string[]; errors: string[] }> {
+/**
+ * Every linked room over [from, to] — the Refresh button, the half-hourly safety net and the Cloudbeds trigger.
+ * Both systems are read ONCE for all the rooms; a room that read shows in step is done there and then. Only a room
+ * with something to do takes its lock and reads again for itself.
+ */
+export async function reconcileLinked(by: string, days = HORIZON_DAYS, window?: { from: string; to: string }, opts: RunOpts = {}): Promise<{ rooms: number; did: string[]; conflicts: string[]; errors: string[] }> {
   const st = await linkSettings(), from = window?.from || todayET(), to = window?.to || iso(ms(from) + days * DAY)
   const did: string[] = [], conflicts: string[] = [], errors: string[] = []
   if (!st.rooms.length) return { rooms: 0, did, conflicts, errors }
   let map: Record<string, LinkedRoom>
   try { map = await roomMap() } catch (e: any) { return { rooms: st.rooms.length, did, conflicts, errors: [String(e?.message || e).slice(0, 200)] } }
-  // Three rooms at a time: each run reads both systems itself, inside its own lock.
-  for (let i = 0; i < st.rooms.length; i += 3) {
-    await Promise.all(st.rooms.slice(i, i + 3).map(async room => {
-      try { const r = await reconcileRoom(room, from, to, by, false, { map, st }); did.push(...r.did.map(x => `${room}: ${x}`)); conflicts.push(...r.conflicts.map(x => `${room}: ${x}`)) }
+  // If the shared read fails, each room still reads for itself (and fails safe by itself).
+  const [cb, gy] = await Promise.all([readCloudbeds(from, to, opts.protect ? 35 : undefined).catch(() => undefined), readGuesty(st.rooms.map(r => map[r]?.listingId).filter(Boolean) as string[], from, to).catch(() => undefined)])
+  for (let i = 0; i < st.rooms.length; i += 4) {
+    await Promise.all(st.rooms.slice(i, i + 4).map(async room => {
+      try { const r = await reconcileRoom(room, from, to, by, false, { map, st, cb, gy }, opts); did.push(...r.did.map(x => `${room}: ${x}`)); conflicts.push(...r.conflicts.map(x => `${room}: ${x}`)) }
       catch (e: any) { errors.push(`${room}: ${String(e?.message || e).slice(0, 160)}`) }
     }))
   }
@@ -330,27 +396,28 @@ const hintWindow = (h?: { from?: string; to?: string } | null): { from: string; 
   } catch { return null }
 }
 /**
- * THE GUESTY TRIGGER. A booking or a calendar change on a listing: the nights named in the message are done at
- * once, and `rest` (the whole year, for moved dates and anything the message did not say) is handed back for the
- * caller to finish after it has answered Guesty.
+ * THE GUESTY TRIGGER. A booking or a calendar change on a listing: the nights named in the message are protected at
+ * once (blocks added, never released), and `rest` (the whole year, which also releases what is no longer held) is
+ * handed back for the caller to finish after it has answered Guesty. A message that does not say which listing it is
+ * about is not dropped: every linked room is checked.
  */
 export async function onGuestyEvent(listingId: string, hint?: { from?: string; to?: string } | null): Promise<{ room: string | null; fast?: string[]; rest?: () => Promise<unknown> }> {
-  if (!listingId) return { room: null }
   const st = await linkSettings(); if (!st.rooms.length) return { room: null }
+  if (!listingId) return { room: 'all linked rooms', rest: () => reconcileLinked('guesty trigger').catch(() => null) }
   const map = await roomMap(), hit = Object.values(map).find(r => r.listingId === listingId)
   if (!hit || !st.rooms.includes(hit.room)) return { room: null }
   const from = todayET(), to = iso(ms(from) + HORIZON_DAYS * DAY), w = hintWindow(hint)
   const full = () => reconcileRoom(hit.room, from, to, 'guesty trigger', false, { map, st }).catch(() => null)
   if (!w) { await full(); return { room: hit.room } }
   let fast: string[] = []
-  try { fast = (await reconcileRoom(hit.room, w.from, w.to, 'guesty trigger', false, { map, st })).did } catch { /* marked pending; the full pass and the retry follow */ }
+  try { fast = (await reconcileRoom(hit.room, w.from, w.to, 'guesty trigger', false, { map, st }, { protect: true })).did } catch { /* marked pending; the full pass and the retry follow */ }
   return { room: hit.room, fast, rest: full }
 }
-/** THE CLOUDBEDS TRIGGER. Its messages do not name the room reliably, so every linked room is checked: the named nights first, then the year. */
+/** THE CLOUDBEDS TRIGGER. Its messages do not name the room reliably, so every linked room is checked: the named nights first (protect only), then the year. */
 export async function onCloudbedsEvent(hint?: { from?: string; to?: string } | null): Promise<number> {
   const st = await linkSettings(); if (!st.rooms.length) return 0
   const w = hintWindow(hint)
-  if (w) await reconcileLinked('cloudbeds trigger', HORIZON_DAYS, w)
+  if (w) await reconcileLinked('cloudbeds trigger', HORIZON_DAYS, w, { protect: true }).catch(() => null)
   await reconcileLinked('cloudbeds trigger')
   return st.rooms.length
 }
