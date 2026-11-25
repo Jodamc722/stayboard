@@ -6,16 +6,19 @@
 // assigned, etc. Make them super nice and easy to view." · "We need 1 for Customer Care as well.
 // Glitches, Claims, other important things." · "We should have a briefs page where we can see the
 // briefs" · "make changes before they go out, add notes, etc."
+// · "The Ops brief needs to show the top priorities, not necessarily the cleans, the schedule and any
+// cleans not assigned, etc." (the Ops plan: every market on one page, a line a person, no clean lists)
 //
 // So a brief is a PLAN: a few numbers, then sections of rows. The page and the email are two drawings
 // of the same plan, so what is read on the page is what is sent. Before it goes out a person can add a
 // note at the top, add lines of their own, and take a row out. Those edits belong to one day: the next
 // morning's plan starts clean.
 
-export type PlanKey = 'broward' | 'miami' | 'north' | 'care'
-export const PLAN_KEYS: PlanKey[] = ['broward', 'miami', 'north', 'care']
-export const PLAN_NAMES: Record<PlanKey, string> = { broward: 'Broward', miami: 'Miami', north: 'North', care: 'Customer Care' }
+export type PlanKey = 'ops' | 'broward' | 'miami' | 'north' | 'care'
+export const PLAN_KEYS: PlanKey[] = ['ops', 'broward', 'miami', 'north', 'care']
+export const PLAN_NAMES: Record<PlanKey, string> = { ops: 'Ops', broward: 'Broward', miami: 'Miami', north: 'North', care: 'Customer Care' }
 export const PLAN_FOR: Record<PlanKey, string> = {
+  ops: 'The operations team: every market on one page',
   broward: 'The Broward field team', miami: 'The Miami field team', north: 'North: the vendor-run homes in Palm Beach County', care: 'The customer care team',
 }
 export const isPlanKey = (v: unknown): v is PlanKey => PLAN_KEYS.indexOf(v as PlanKey) >= 0
@@ -82,7 +85,7 @@ export function parseEmails(v: unknown): string[] {
 export function cleanSettings(v: unknown): PlanSettings {
   const x = (v && typeof v === 'object' ? v : {}) as any
   const one = (k: PlanKey): PlanSetting => ({ to: parseEmails(x[k]?.to), auto: !!x[k]?.auto, lastSent: x[k]?.lastSent && x[k].lastSent.day ? { day: String(x[k].lastSent.day), at: String(x[k].lastSent.at || ''), by: String(x[k].lastSent.by || ''), n: Number(x[k].lastSent.n) || 0 } : null })
-  return { broward: one('broward'), miami: one('miami'), north: one('north'), care: one('care') }
+  return { ops: one('ops'), broward: one('broward'), miami: one('miami'), north: one('north'), care: one('care') }
 }
 
 // ── Hours ───────────────────────────────────────────────────────────────────────────────────────

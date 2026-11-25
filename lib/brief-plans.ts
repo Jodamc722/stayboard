@@ -19,11 +19,17 @@ import { gather, niceDay, lowReviewInspections } from './ops-brief'
 import { upcomingAutoInspections } from './auto-inspections'
 import { isGuestToKnow, type GuestFlag } from './briefs/guests'
 import { unitShort, personName, crewNote, cleanTitle, isOfficeLike, APP_URL } from './briefs/ui'
-import { CLEAN_RATES_KEY, resolveCleanRates, priceClean, rateSizeLabel } from './clean-rates'
+import { CLEAN_RATES_KEY, resolveCleanRates, priceClean, rateSizeLabel, type CleanRates } from './clean-rates'
 import { urgencyOf, daysUntil } from './claims'
 import { loadUnpaid } from './unpaid'
 import { sendGmail } from './gmail-send'
 import { recordRun } from './automation-runs'
+import { getShifts, nameMatches, nameMatchesRoster } from './homebase'
+import { getSalaried } from './salary'
+import { getStaff } from './staffing'
+import { blockedUnits } from './blocked-units'
+import { doorBriefItems } from './connecting-doors'
+import { buildDirection } from './briefs/direction'
 import {
   PLAN_KEYS, PLAN_NAMES, PLAN_FOR, applyEdits, cleanEdits, cleanSettings, planEmailHtml, planSubject, hoursText, personMeta, crewFor,
   type Plan, type PlanKey, type PlanRow, type PlanSection, type PlanTag, type PlanGroup, type PlanEdits, type PlanSettings, type Tone,
@@ -46,28 +52,35 @@ const flagTags = (f: GuestFlag): PlanTag[] => {
   return t.length ? t : [{ text: 'VIP', tone: 'amber' }]
 }
 
+// ── Expected hours ──────────────────────────────────────────────────────────────────────────────
+// Jon, 2026-11-25: "how many hours based on cleans expected". His labor KPI, the same one the labor
+// report and the scheduler read: the P&L's expected labor cost of the clean, by building and unit size,
+// divided by what a cleaner is paid an hour (lib/clean-rates). A vendor's clean and an owner-cleaned unit
+// are not our crew's hours, so they carry none.
+async function cleanPricer(): Promise<{ rates: CleanRates; priceOf: (c: any, market?: string) => { hours: number; size: string } }> {
+  const [ls, saved] = await Promise.all([
+    Promise.resolve(supabaseAdmin().from('guesty_listings').select('id,nickname,title,building,bedrooms').limit(1000)).then(r => (r.data || []) as any[], () => [] as any[]), // deliberate cap: one row per listing
+    getSetting<any>(CLEAN_RATES_KEY, null).catch(() => null),
+  ])
+  const rates = resolveCleanRates(saved)
+  const listing: Record<string, any> = {}
+  for (const l of ls) listing[str(l.id)] = l
+  const priceOf = (c: any, market?: string) => {
+    const l = listing[str(c.lid)], beds = l && l.bedrooms != null ? Number(l.bedrooms) : NaN
+    const pc = priceClean(rates, { building: l?.building, name: l ? str(l.nickname || l.title || c.unit) : str(c.unit), bedrooms: Number.isFinite(beds) ? beds : null, market })
+    return { hours: pc.outsourced || pc.ownerCleans ? 0 : pc.hours, size: l ? rateSizeLabel(pc.size) : '' }
+  }
+  return { rates, priceOf }
+}
+
 // ── A market plan ───────────────────────────────────────────────────────────────────────────────
 async function buildMarketPlan(key: 'broward' | 'miami' | 'north'): Promise<Plan> {
   const market = PLAN_NAMES[key] as 'Broward' | 'Miami' | 'North'
   const d: any = await gather(market)
   const sheet: any = d.sheet || {}, today: string = d.today
-  const [autoRes, reviewRes, lsRes, savedRates] = await Promise.all([
-    upcomingAutoInspections(2).catch(() => [] as any[]), lowReviewInspections().catch(() => [] as any[]),
-    Promise.resolve(supabaseAdmin().from('guesty_listings').select('id,nickname,title,building,bedrooms').limit(1000)).then(r => (r.data || []) as any[], () => [] as any[]), // deliberate cap: one row per listing
-    getSetting<any>(CLEAN_RATES_KEY, null).catch(() => null),
-  ])
-  // EXPECTED HOURS (Jon, 2026-11-25: "how many hours based on cleans expected"). His labor KPI, the same
-  // one the labor report and the scheduler read: the P&L's expected labor cost of the clean, by building
-  // and unit size, divided by what a cleaner is paid an hour (lib/clean-rates). A vendor's clean and an
-  // owner-cleaned unit are not our crew's hours, so they carry none.
-  const rates = resolveCleanRates(savedRates)
-  const listing: Record<string, any> = {}
-  for (const l of lsRes as any[]) listing[str(l.id)] = l
-  const priceOf = (c: any): { hours: number; size: string } => {
-    const l = listing[str(c.lid)], beds = l && l.bedrooms != null ? Number(l.bedrooms) : NaN
-    const pc = priceClean(rates, { building: l?.building, name: l ? str(l.nickname || l.title || c.unit) : str(c.unit), bedrooms: Number.isFinite(beds) ? beds : null, market })
-    return { hours: pc.outsourced || pc.ownerCleans ? 0 : pc.hours, size: l ? rateSizeLabel(pc.size) : '' }
-  }
+  const [autoRes, reviewRes, pricer] = await Promise.all([upcomingAutoInspections(2).catch(() => [] as any[]), lowReviewInspections().catch(() => [] as any[]), cleanPricer()])
+  const rates = pricer.rates
+  const priceOf = (c: any) => pricer.priceOf(c, market)
   const sizing = (c: any) => { const p = priceOf(c); return [p.size, p.hours > 0 ? 'about ' + hoursText(p.hours, 0.25) : ''].filter(Boolean).join(' · ') }
   const cleans: any[] = d.cleans || [], other: any[] = d.hkOther || []
   const arrivals: any[] = (sheet.arrivals || []).slice().sort((a: any, b: any) => str(a.checkInTime).localeCompare(str(b.checkInTime)) || str(a.unit).localeCompare(str(b.unit)))
@@ -187,6 +200,174 @@ async function buildMarketPlan(key: 'broward' | 'miami' | 'north'): Promise<Plan
   }
 }
 
+// ── The ops plan ────────────────────────────────────────────────────────────────────────────────
+// Jon, 2026-11-25: "The Ops brief needs to show the top priorities, not necessarily the cleans, the
+// schedule and any cleans not assigned, etc." So this plan is every market on one page and it does NOT
+// list the day clean by clean (the market plans do that). In order: what needs a decision, the cleans
+// nobody holds, then the schedule: who is working in each market, their shift, how many cleans and
+// expected hours and other tasks they carry. After that the things an ops manager walks into: VIPs and
+// owners landing, inspections, open guest issues, units down.
+//
+// TOP PRIORITIES are the Today board's own ranked rows (lib/briefs/direction: one owner, one next step)
+// and then what the day sheet shows that the board did not already name: the connecting door, short
+// days ahead, recurring work running late, a guest still in a unit, a maintenance job with no tech.
+const capped = <X,>(p: Promise<X>, ms = 25_000): Promise<X | null> => Promise.race([p.catch(() => null), new Promise<null>(r => setTimeout(() => r(null), ms))])
+const slug = (v: string) => str(v).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40)
+const MARKET_ORDER = ['Broward', 'Miami', 'North', 'Other']
+async function buildOpsPlan(): Promise<Plan> {
+  const d: any = await gather('full')
+  const sheet: any = d.sheet || {}, today: string = d.today
+  const [pricer, shiftsRes, salaried, staff, dir, doors, blocked, forecast] = await Promise.all([
+    cleanPricer(),
+    capped(getShifts(today, 'America/New_York')), capped(getSalaried()), capped(getStaff()),
+    capped(buildDirection(), 40_000), capped(doorBriefItems(today), 15_000), capped(blockedUnits(30)),
+    capped(import('./forecast/staffing').then(m => m.buildStaffingForecast({ days: 7 }))),
+  ])
+  const cleans: any[] = d.cleans || [], other: any[] = d.hkOther || []
+  const arrivals: any[] = (sheet.arrivals || []).slice().sort((a: any, b: any) => str(a.checkInTime).localeCompare(str(b.checkInTime)) || str(a.unit).localeCompare(str(b.unit)))
+  const flags: Record<string, GuestFlag> = d.todayFlags || {}
+  const arrivalBy: Record<string, any> = {}
+  for (const a of arrivals) arrivalBy[str(a.listingId)] = a
+  const timeOf = (lid: string) => str(arrivalBy[lid]?.checkInTime || '4:00 PM')
+  const flagOf = (a: any): GuestFlag => ({ ...(flags[str(a.listingId)] || {}), ...(str(a.ownerFlag) === 'owner booking' ? { owner: true } : {}) })
+  // lid → market, from whatever the day sheet already placed.
+  const mkMap: Record<string, string> = {}
+  for (const rows of [sheet.work, sheet.arrivals, sheet.departures, sheet.vacants, sheet.ownerStays]) for (const r of (Array.isArray(rows) ? rows : [])) { const lid = str(r?.listingId), m = str(r?.market); if (lid && m && !mkMap[lid]) mkMap[lid] = m }
+  const mkOf = (x: any): string => { const m = mkMap[str(x.lid)] || (/botanica|capri|lucerne|amrit|\bPT\b|park tower|salato/i.test(str(x.unit)) ? 'North' : ''); return /vendor|north/i.test(m) ? 'North' : m === 'Miami' || m === 'Broward' ? m : 'Other' }
+  const priceOf = (c: any) => pricer.priceOf(c, mkOf(c))
+  const sizing = (c: any) => { const p = priceOf(c); return [p.size, p.hours > 0 ? 'about ' + hoursText(p.hours, 0.25) : ''].filter(Boolean).join(' · ') }
+  const unassigned = cleans.filter(c => /UNASSIGNED/.test(c.assignee))
+  const sameDay = cleans.filter(c => c.sameDayArrival && c.state !== 'done')
+  let dayHours = 0
+  for (const c of cleans) dayHours += priceOf(c).hours
+
+  // WHO IS WORKING. A job belongs to its lead (the first field person on it), the way the market plans
+  // and the labor report count it. A shift is matched to a person by name, with the roster match for
+  // the names Breezeway and Homebase spell differently.
+  const shifts: any[] = ((shiftsRes || []) as any[]).filter(x => !x.open && x.startAt)
+  const shiftNames = shifts.map(x => str(x.name))
+  const shiftOf = (n: string): any | null => shifts.find(x => nameMatches(str(x.name), n)) || (() => { const r = nameMatchesRoster(n, shiftNames); return r ? shifts.find(x => str(x.name) === r) || null : null })()
+  const offSched = new Set<string>()
+  for (const r of (salaried || []) as any[]) if (r.active !== false) offSched.add(str(r.name))
+  for (const r of (staff || []) as any[]) if (r.field === false) offSched.add(str(r.name))
+  const isOff = (n: string) => Array.from(offSched).some(o => nameMatches(o, n))
+  const office = new Set<string>(((d.officeNames || []) as any[]).map(n => str(n).trim().toLowerCase()))
+  type Person = { name: string; cleans: any[]; tasks: any[] }
+  const people: Record<string, Person> = {}
+  const holder = (x: any) => str(x.lead || str(x.assignee).split(',')[0]).trim()
+  for (const c of cleans) { if (/UNASSIGNED/.test(c.assignee)) continue; const n = holder(c); if (n) (people[n] = people[n] || { name: n, cleans: [], tasks: [] }).cleans.push(c) }
+  for (const o of other) {
+    if (/UNASSIGNED/.test(o.assignee)) continue
+    const n = holder(o)
+    if (!n || (!people[n] && (office.has(n.toLowerCase()) || isOfficeLike(n)))) continue
+    ;(people[n] = people[n] || { name: n, cleans: [], tasks: [] }).tasks.push(o)
+  }
+  const marketOfPerson = (p: Person): string => { const tally: Record<string, number> = {}; for (const x of [...p.cleans, ...p.tasks]) { const m = mkOf(x); tally[m] = (tally[m] || 0) + 1 }; return Object.keys(tally).sort((a, b) => tally[b] - tally[a] || MARKET_ORDER.indexOf(a) - MARKET_ORDER.indexOf(b))[0] || 'Other' }
+  const working = Object.values(people)
+  const idle = shifts.filter(sh => !working.some(p => { const hit = shiftOf(p.name); return hit && str(hit.name) === str(sh.name) }) && !isOff(str(sh.name)))
+  const personRow = (p: Person, market: string): PlanRow => {
+    const sh = shiftOf(p.name), hours = p.cleans.reduce((t, c) => t + priceOf(c).hours, 0)
+    const hot = p.cleans.filter(c => c.sameDayArrival && c.state !== 'done').length, done = p.cleans.filter(c => c.state === 'done').length
+    const lateN = p.tasks.filter(o => (o.late || 0) > 0 && o.state !== 'done').length
+    const tags: PlanTag[] = []
+    if (!p.cleans.length && p.tasks.every(o => o.dept === 'maintenance')) tags.push({ text: 'Maintenance', tone: 'grey' })
+    if (lateN) tags.push({ text: lateN + ' late', tone: 'red' })
+    if (shiftsRes && !sh && market !== 'North' && !isOff(p.name)) tags.push({ text: 'No shift in Homebase', tone: 'grey' })
+    return { id: 'sc:' + slug(p.name), title: personName(p.name), tags, meta: [sh ? str(sh.label) : '', personMeta({ cleans: p.cleans.length, hours, tasks: p.tasks.length, sameDay: hot, done })].filter(Boolean).join(' · ') }
+  }
+  const schedule: PlanGroup[] = []
+  for (const m of MARKET_ORDER) {
+    const crew = working.filter(p => marketOfPerson(p) === m).sort((a, b) => b.cleans.length - a.cleans.length || b.tasks.length - a.tasks.length || a.name.localeCompare(b.name))
+    if (!crew.length) continue
+    const nC = crew.reduce((t, p) => t + p.cleans.length, 0), h = crew.reduce((t, p) => t + p.cleans.reduce((u, c) => u + priceOf(c).hours, 0), 0)
+    schedule.push({ name: m === 'Other' ? 'Other units' : m, rows: [], also: crew.map(p => personRow(p, m)),
+      meta: [`${crew.length} ${m === 'North' ? (crew.length === 1 ? 'vendor' : 'vendors') : 'working'}`, nC ? `${nC} ${nC === 1 ? 'clean' : 'cleans'}` : '', h > 0 ? `about ${hoursText(h)}, the guide is ${crewFor(h, pricer.rates.shiftHours)}` : ''].filter(Boolean).join(' · ') })
+  }
+  if (idle.length) schedule.push({ name: 'On shift, nothing assigned', meta: 'give them a clean, a strip or an inspection', rows: [], also: idle.map((sh: any) => ({ id: 'sc:idle:' + slug(str(sh.name)), title: personName(str(sh.name)), tone: 'amber' as Tone, meta: [str(sh.label), str(sh.role || '')].filter(Boolean).join(' · ') })) })
+
+  // TOP PRIORITIES.
+  const pri: PlanRow[] = []
+  if (unassigned.length) {
+    const hot = unassigned.filter(c => c.sameDayArrival).length
+    pri.push({ id: 'pr:unassigned', title: `${unassigned.length} ${unassigned.length === 1 ? 'clean has' : 'cleans have'} nobody on ${unassigned.length === 1 ? 'it' : 'them'}`, tone: 'red', tags: hot ? [{ text: hot + ' same-day', tone: 'red' }] : [],
+      meta: unassigned.slice(0, 4).map(c => unitShort(c.unit)).join(', ') + (unassigned.length > 4 ? ` and ${unassigned.length - 4} more` : ''),
+      note: idle.length ? `${idle.slice(0, 3).map((sh: any) => first(str(sh.name))).join(', ')} ${idle.length === 1 ? 'is' : 'are'} on shift with nothing assigned` : undefined })
+  }
+  for (const dr of (doors || []) as any[]) {
+    const none = !dr.task?.who?.length
+    pri.push({ id: 'pr:door:' + slug(dr.pair) + ':' + dr.kind + ':' + dr.when, title: str(dr.pair), tone: (dr.when === 'today' && (dr.walkIn || none) && !dr.skip ? 'red' : 'amber') as Tone,
+      tags: [{ text: 'Connecting door', tone: dr.when === 'today' ? 'red' : 'amber' }, ...(dr.walkIn ? [{ text: 'Booked today', tone: 'red' as const }] : [])],
+      meta: [dr.skip ? 'One-unit stay ends ' + dr.when : dr.kind === 'open' ? 'Open the connecting door before the guests arrive' : 'Close the connecting door after checkout', dr.skip ? '' : dr.when, dr.guest ? first(str(dr.guest)) : ''].filter(Boolean).join(' · '),
+      note: dr.task ? (none ? 'Task on the board, nobody on it: assign the cleaner' : 'Task on the board with ' + dr.task.who.map(first).join(', ')) : dr.skip ? str(dr.skip) : 'No door task yet: it is created on the next run' })
+  }
+  const named = new Set<string>()
+  for (const x of ((dir as any)?.decide || []) as any[]) {
+    const u = unitShort(str(x.unit))
+    if (u) named.add(u.toLowerCase())
+    const href = x.href ? (str(x.href).startsWith('http') ? str(x.href) : APP_URL + str(x.href)) : undefined
+    pri.push({ id: 'pr:' + slug(str(x.key)), title: u || cut(str(x.title), 80), tone: (x.severity === 'now' ? 'red' : 'amber') as Tone, tags: x.owner ? [{ text: str(x.owner), tone: x.severity === 'now' ? 'red' : 'amber' }] : [],
+      meta: [u ? cut(str(x.title), 110) : '', str(x.due)].filter(Boolean).join(' · ') || undefined, note: x.next ? 'Next: ' + str(x.next) : undefined, href })
+  }
+  const fresh = (unit: string) => { const u = unitShort(unit).toLowerCase(); return !u || !named.has(u) }
+  const short = (((forecast as any)?.short || []) as any[]).filter(x => Number(x.lead) <= 3)
+  if (short.length) pri.push({ id: 'pr:short', title: `${short.length} short ${short.length === 1 ? 'day' : 'days'} in the next 3`, tone: 'amber', tags: [{ text: 'Short staffed', tone: 'amber' }], meta: short.slice(0, 3).map(x => `${str(x.label || x.date)} ${str(x.market)} needs ${x.needed}, ${x.rostered} rostered`).join(' · ') })
+  for (const o of other.filter(o => (o.late || 0) > 0 && o.state !== 'done' && fresh(o.unit)).sort((a, b) => (b.late || 0) - (a.late || 0)).slice(0, 4))
+    pri.push({ id: 'pr:late:' + o.lid + ':' + slug(o.task).slice(0, 24), title: /^unknown unit$/i.test(o.unit) ? 'Common areas' : unitShort(o.unit), tone: 'amber', tags: [{ text: o.late + (o.late === 1 ? ' day late' : ' days late'), tone: 'red' }], meta: cleanTitle(o.task), note: /UNASSIGNED/.test(o.assignee) ? 'Nobody on it' : 'With ' + first(o.lead || o.assignee) })
+  const ALREADY = /nobody assigned|booked today|walk-?in|same-?day turn|clean not started/i
+  for (const e of ((sheet.exceptions || []) as any[]).filter(e => e.severity === 'high' && !ALREADY.test(str(e.kind) + ' ' + str(e.detail)) && fresh(str(e.unit))).slice(0, 3))
+    pri.push({ id: 'pr:ex:' + slug(str(e.unit)) + ':' + slug(str(e.kind)).slice(0, 16), title: unitShort(str(e.unit)), tone: 'amber', tags: [{ text: 'Guest in unit', tone: 'amber' }], meta: cut(str(e.detail), 130), note: str(e.action) || undefined })
+  for (const o of other.filter(o => /UNASSIGNED/.test(o.assignee) && o.dept === 'maintenance' && o.state !== 'done' && !(o.late > 0) && fresh(o.unit)).slice(0, 2))
+    pri.push({ id: 'pr:tech:' + o.lid + ':' + slug(o.task).slice(0, 24), title: unitShort(o.unit), tone: 'amber', tags: [{ text: 'No tech', tone: 'amber' }], meta: cleanTitle(o.task), note: 'Put a technician on it or it rolls again tomorrow' })
+  const PRI_CAP = 10
+
+  const sections: PlanSection[] = []
+  sections.push({ key: 'priorities', title: 'Top priorities', tone: 'red', rows: pri.slice(0, PRI_CAP), empty: 'Nothing needs a decision right now.', more: pri.length > PRI_CAP ? `and ${pri.length - PRI_CAP} more on the Today board` : (dir ? undefined : 'The Today board could not be read: its ranked list is missing here.') })
+  sections.push({ key: 'unassigned', title: 'Cleans not assigned', tone: 'red', empty: 'Every clean has a name on it.',
+    rows: unassigned.slice().sort((a, b) => (b.sameDayArrival ? 1 : 0) - (a.sameDayArrival ? 1 : 0) || str(a.unit).localeCompare(str(b.unit), undefined, { numeric: true })).map(c => ({ id: 'un:' + c.lid, title: unitShort(c.unit), tone: 'red' as Tone,
+      meta: [c.sameDayArrival ? 'Guest lands ' + timeOf(str(c.lid)) + ': assign this one first' : 'Checkout clean', sizing(c)].filter(Boolean).join(' · '), tags: [{ text: mkOf(c), tone: 'grey' as const }, ...(c.sameDayArrival ? [{ text: 'Same-day turn', tone: 'red' as const }] : [])] })) })
+  sections.push({ key: 'schedule', title: 'The schedule: who is working', groups: schedule, empty: 'Nobody has work on the board today.', more: shiftsRes ? undefined : 'Homebase could not be read: shift times are missing.' })
+  // VIPs, big bookings and owners landing, with whether the unit is ready.
+  const cleanOf: Record<string, any> = {}
+  for (const c of cleans) cleanOf[str(c.lid)] = c
+  const vips = arrivals.filter(a => isGuestToKnow(flagOf(a)))
+  const vipRows: PlanRow[] = vips.map(a => { const lid = str(a.listingId), c = cleanOf[lid], f = flagOf(a), open = !!c && c.state !== 'done', none = !!c && /UNASSIGNED/.test(c.assignee)
+    return { id: 'vip:' + lid, title: unitShort(str(a.unit)), tone: (f.atRisk || none ? 'red' : open ? 'amber' : 'none') as Tone, tags: flagTags(f), meta: `${first(a.guest)} lands ${timeOf(lid)}${a.nights ? ' · ' + a.nights + ' nights' : ''}`,
+      note: !c ? 'No clean today: walk it before they land' : c.state === 'done' ? 'Clean done' : none ? 'Clean has nobody on it' : `Clean ${c.state === 'running' ? 'in progress' : 'not started'}, with ${first(holder(c))}` } })
+  const seenVip = new Set(vips.map(a => str(a.listingId)))
+  for (const o of (sheet.ownerStays || []) as any[]) if (!seenVip.has(str(o.listingId))) vipRows.push({ id: 'own:' + o.listingId, title: unitShort(str(o.unit)), tags: [{ text: 'Owner in-house', tone: 'gold' }], meta: `${str(o.owner || o.guest)} · until ${niceDay(str(o.checkOut).slice(0, 10))}` })
+  sections.push({ key: 'vip', title: 'VIPs, big bookings and owners', rows: vipRows, empty: 'No VIP, big booking or owner today.' })
+  // Inspections and walkthroughs still to do today.
+  const insp = other.filter(o => /inspect|quality|audit|unit check|walkthrough|walk-through/i.test(str(o.dept) + ' ' + str(o.task)) && !/strip/i.test(str(o.task)) && o.state !== 'done')
+    .sort((a, b) => (/UNASSIGNED/.test(b.assignee) ? 1 : 0) - (/UNASSIGNED/.test(a.assignee) ? 1 : 0) || str(a.unit).localeCompare(str(b.unit), undefined, { numeric: true }))
+  const INSP_CAP = 12, seenIn: Record<string, number> = {}
+  if (insp.length) sections.push({ key: 'inspections', title: 'Inspections today', more: insp.length > INSP_CAP ? `and ${insp.length - INSP_CAP} more on the board` : undefined,
+    rows: insp.slice(0, INSP_CAP).map(o => { const none = /UNASSIGNED/.test(o.assignee), base = 'in:' + o.lid + ':' + slug(o.task).slice(0, 24), k = (seenIn[base] = (seenIn[base] || 0) + 1)
+      return { id: k > 1 ? base + ':' + k : base, title: /^unknown unit$/i.test(o.unit) ? 'Common areas' : unitShort(o.unit), tone: (none ? 'red' : 'none') as Tone, tags: [...(o.late > 0 ? [{ text: o.late + (o.late === 1 ? ' day late' : ' days late'), tone: 'red' as const }] : []), ...(o.state === 'running' ? [{ text: 'In progress', tone: 'amber' as const }] : [])], meta: cleanTitle(o.task), note: none ? 'Nobody on it' : 'With ' + first(holder(o)) } }) })
+  // Open guest issues, oldest first.
+  const issues: any[] = ((sheet.glitches || []) as any[]).filter(g => !/done|resolved|closed/i.test(str(g.status))).sort((a, b) => str(a.created_at).localeCompare(str(b.created_at)))
+  if (issues.length) sections.push({ key: 'issues', title: 'Open guest issues', more: issues.length > 6 ? `and ${issues.length - 6} more: the Customer Care plan has them all` : undefined,
+    rows: issues.slice(0, 6).map(g => ({ id: 'gl:' + g.id, title: unitShort(str(g.unit) || 'No unit'), tone: 'amber' as Tone, meta: cut(str(g.overview), 130), tags: str(g.created_at) ? [{ text: 'Since ' + niceDay(str(g.created_at).slice(0, 10)), tone: 'grey' as const }] : [], href: `${APP_URL}/glitches` })) })
+  // Units down now.
+  const down: any[] = (((blocked as any)?.runs || []) as any[]).filter(r => r.live)
+  if (down.length) sections.push({ key: 'down', title: 'Units down now', more: down.length > 6 ? `and ${down.length - 6} more on Blocked units` : undefined,
+    rows: down.slice(0, 6).map(r => ({ id: 'dn:' + r.listingId, title: unitShort(str(r.unit)), tone: (r.nights >= 14 ? 'amber' : 'none') as Tone, meta: [str(r.guestyLabel || r.reason), r.blockEnd ? 'until ' + niceDay(str(r.blockEnd).slice(0, 10)) : r.openEnded ? 'no end date' : ''].filter(Boolean).join(' · '), note: r.note ? cut(str(r.note), 120) : undefined })) })
+  const ahead: any[] = d.forward || []
+  if (ahead.length) sections.push({ key: 'ahead', title: `Coming up, next ${d.lookaheadDays || 7} days`, rows: ahead.slice(0, 8).map((x: any, i: number) => ({ id: 'ah:' + i + ':' + str(x.when), title: unitShort(str(x.unit)), tags: flagTags(x), meta: [str(x.guest), niceDay(str(x.when))].filter(Boolean).join(' · ') })) })
+
+  return {
+    key: 'ops', name: PLAN_NAMES.ops, forWhom: PLAN_FOR.ops, day: today, dayLabel: niceDay(today), builtAt: new Date().toISOString(),
+    tiles: [
+      { label: 'Arrivals', value: String(arrivals.length) },
+      { label: 'Cleans', value: String(cleans.length) },
+      ...(dayHours > 0 ? [{ label: 'Clean hours', value: hoursText(dayHours), note: crewFor(dayHours, pricer.rates.shiftHours) }] : []),
+      { label: 'Not assigned', value: String(unassigned.length), tone: (unassigned.length ? 'red' : 'green') as Tone },
+      { label: 'Same-day turns', value: String(sameDay.length), tone: (sameDay.length ? 'red' : 'none') as Tone },
+      { label: 'Working today', value: String(shiftsRes ? shifts.length : working.length), note: shiftsRes ? (idle.length ? idle.length + ' with nothing assigned' : 'on shift in Homebase') : 'with work on the board' },
+    ],
+    sections, board: { label: 'Open the Ops board', href: `${APP_URL}/plan` },
+  }
+}
+
 // ── The customer care plan ──────────────────────────────────────────────────────────────────────
 async function buildCarePlan(): Promise<Plan> {
   const sb = supabaseAdmin()
@@ -250,7 +431,7 @@ async function buildCarePlan(): Promise<Plan> {
 }
 
 /** One plan, as the day stands now, with nobody's edits on it. */
-export async function buildPlan(key: PlanKey): Promise<Plan> { return key === 'care' ? buildCarePlan() : buildMarketPlan(key) }
+export async function buildPlan(key: PlanKey): Promise<Plan> { return key === 'care' ? buildCarePlan() : key === 'ops' ? buildOpsPlan() : buildMarketPlan(key) }
 
 // ── Edits, settings, sending ────────────────────────────────────────────────────────────────────
 export async function readEdits(key: PlanKey, day: string): Promise<PlanEdits> {

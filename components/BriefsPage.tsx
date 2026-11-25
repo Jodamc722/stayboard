@@ -19,7 +19,7 @@ const bar = (t?: string) => (t === 'red' ? 'border-l-rose-500' : t === 'amber' ?
 const OLD = [['Ops morning', 'ops'], ['GM morning', 'gm'], ['Admin morning', 'admin'], ['Maintenance run', 'maint'], ['Field Run · Miami', 'field-miami'], ['Field Run · Broward', 'field-broward']]
 
 export function BriefsPage() {
-  const [key, setKey] = useState<PlanKey>('broward')
+  const [key, setKey] = useState<PlanKey>(PLAN_KEYS[0])
   const [data, setData] = useState<Res | null>(null)
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState('')
@@ -34,7 +34,7 @@ export function BriefsPage() {
     setData(r); setLoading(false)
     if (r.ok) { setNote(r.plan?.note || ''); setTo((r.settings?.to || []).join(', ')) }
   }, [])
-  useEffect(() => { try { const h = window.location.hash.slice(1); if ((PLAN_KEYS as string[]).indexOf(h) >= 0) { setKey(h as PlanKey); load(h as PlanKey); return } } catch { /* no hash */ } load('broward') }, [load])
+  useEffect(() => { try { const h = window.location.hash.slice(1); if ((PLAN_KEYS as string[]).indexOf(h) >= 0) { setKey(h as PlanKey); load(h as PlanKey); return } } catch { /* no hash */ } load(PLAN_KEYS[0]) }, [load])
   const pick = (k: PlanKey) => { setKey(k); setMsg(''); setLine(''); try { window.location.hash = k } catch { /* fine */ } load(k) }
 
   const post = async (op: string, body: Record<string, unknown> = {}, done = '') => {
