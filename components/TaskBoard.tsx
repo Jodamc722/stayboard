@@ -103,6 +103,13 @@ function parseQuery(q: string, people: Person[], properties: string[]) {
   return out
 }
 
+/**
+ * "No owner" means work a person put on the board that nobody holds. A future project has no owner by
+ * design, and an offline listing has its own count, so neither is in that number; on its own tab each
+ * is, so the filter still finds the ones nobody has picked up.
+ */
+const noOwner = (i: Item, tab: string) => { const l = laneOf(i.lane); return !i.assignees.length && ((l !== 'Future projects' && l !== AUTO_LANE) || tab === l) }
+
 /** One write. Never throws; always answers { ok, error }. */
 async function send(body: unknown, url: string = KEY): Promise<Sent> {
   try {
@@ -317,7 +324,7 @@ export function TaskBoard({ initialItem }: { initialItem?: string | null }) {
     if (!data || !parsed) return [] as Item[]
     const base = tab === 'done' ? doneRows : openRows
     return base.filter(i => {
-      if (owner === 'none' ? i.assignees.length > 0 : (owner && !i.assignees.includes(owner))) return false
+      if (owner === 'none' ? !noOwner(i, tab) : (owner && !i.assignees.includes(owner))) return false
       if (parsed.owners.length && !i.assignees.some(a => parsed.owners.includes(a))) return false
       if (prop && (i.property || '') !== prop) return false
       if (parsed.props.length && !parsed.props.includes(i.property || '')) return false
@@ -345,8 +352,7 @@ export function TaskBoard({ initialItem }: { initialItem?: string | null }) {
       const isLate = !!i.due && i.due < t
       if (isLate) late++
       else if (i.due && i.due <= wk) week++
-      // A future project and an offline listing nobody has picked up are not "work with no owner".
-      if (!i.assignees.length && laneOf(i.lane) !== 'Future projects') unowned++
+      if (noOwner(i, 'all')) unowned++
       for (const a of i.assignees) { const e = by.get(a) || { open: 0, late: 0 }; e.open++; if (isLate) e.late++; by.set(a, e) }
       if (i.property) props.set(i.property, (props.get(i.property) || 0) + 1)
     }
@@ -431,7 +437,7 @@ export function TaskBoard({ initialItem }: { initialItem?: string | null }) {
             <span className="flex items-center gap-1.5 flex-wrap mt-1 sm:contents">
               <span className="text-[12.5px] sm:truncate" title={it.assignees.map(nameOf).join(', ')}>
                 {who.length > 0 ? <span className="text-ink">{who.slice(0, 2).join(', ')}{who.length > 2 ? ' +' + (who.length - 2) : ''}</span>
-                  : it.done || lane === 'Future projects' ? <span className="text-muted">—</span> : <Tag tone="amber">No owner</Tag>}
+                  : it.done || lane === 'Future projects' || lane === AUTO_LANE ? <span className="text-muted">—</span> : <Tag tone="amber">No owner</Tag>}
               </span>
               <span>{d ? <Tag tone={d.tone} title={niceDate(it.due)}>{d.label}</Tag> : <span className="text-[12px] text-muted">{it.done ? '' : 'No date'}</span>}</span>
               <span>{it.done || it.priority === 'normal' ? null : <Tag tone={PRI_TONE[it.priority] || 'slate'}>{cap(it.priority)}</Tag>}</span>
