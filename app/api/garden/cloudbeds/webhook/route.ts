@@ -15,6 +15,8 @@ export async function POST(req: NextRequest) {
   const token = req.headers.get('x-garden-token') || req.nextUrl.searchParams.get('token') || ''
   if (token !== h.token) return NextResponse.json({ error: 'bad token' }, { status: 401 })
   waitUntil(onEvent().catch(() => {}))
+  // The calendar link: a booking or a block changed in Cloudbeds, so linked rooms are checked against Guesty at once.
+  waitUntil(import('@/lib/garden/calendar-link').then(m => m.onCloudbedsEvent()).catch(() => {}))
   return NextResponse.json({ ok: true })
 }
 
