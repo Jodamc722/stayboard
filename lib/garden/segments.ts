@@ -7,9 +7,9 @@
 //              live Guesty listing named Botanica carries its room number, so it follows Guesty.
 //   Garden     every other physical room (the hotel's own, sold through Cloudbeds).
 //   Whole      both.
-// The SAME rooms exist in Cloudbeds (most Botanica rooms are blocked there, because Guesty sells them),
-// and some Botanica rooms do take Cloudbeds bookings — so a stay is placed by the ROOM it is in, not
-// by the system it was booked in. A stay across rooms in both is split by room.
+// The SAME rooms exist in Cloudbeds (most Botanica rooms are blocked there, because Guesty sells them). A stay is
+// placed by WHO SOLD IT: a Guesty Botanica booking is Botanica's, every Cloudbeds booking is the Garden's, even when
+// Cloudbeds puts it in a Botanica room number. That keeps Botanica here equal to the Botanica report.
 //
 // loadStays() is the one reader for reporting: Cloudbeds reservations + the Guesty Botanica stays
 // Cloudbeds does not hold, each cut into per-room parts with a segment. Guesty units are matched to
@@ -86,7 +86,11 @@ export async function segmentRooms(): Promise<{ rooms: SegRoom[]; botanica: Set<
 const nightsOf = (ci: string, co: string, n: any) => Math.max(1, num(n) || Math.round((Date.parse(co) - Date.parse(ci)) / 86400000))
 const CB_COLS = 'id,status,guest_name,check_in,check_out,nights,total,balance,source,room_names,booked_at'
 const GY_COLS = 'id,listing_id,status,check_in,check_out,nights,source,guest_name,created_at,accom:raw->money->>fareAccommodationAdjusted,clean:raw->money->>fareCleaning,items:raw->money->invoiceItems,balance:raw->money->>balanceDue'
-/** One Cloudbeds reservation as a stay, cut by room. */
+/**
+ * One Cloudbeds reservation as a stay, cut by room. ALWAYS THE GARDEN'S (Jon, 2026-11-25, after Margaux saw two
+ * different Botanica figures): Botanica is what is sold as Botanica through Guesty, so that its numbers are the ones
+ * on the Botanica report. A hotel booking that Cloudbeds happens to put in a Botanica room number is a hotel sale.
+ */
 function fromCb(r: any, botanica: Set<string>): SegStay | null {
   const ci = s(r.check_in).slice(0, 10), co = s(r.check_out).slice(0, 10)
   if (!ci || !co) return null
@@ -98,7 +102,7 @@ function fromCb(r: any, botanica: Set<string>): SegStay | null {
   const fees = 0, total = rent
   // No room yet: it is the hotel's own booking until a room says otherwise.
   const k = Math.max(1, names.length)
-  const parts: StayPart[] = names.length ? names.map(nm => ({ room: nm, segment: botanica.has(nm) ? 'botanica' : 'garden', total: total / k, rent: rent / k, fees: 0, other: other / k })) : [{ room: '', segment: 'garden', total, rent, fees, other }]
+  const parts: StayPart[] = names.length ? names.map(nm => ({ room: nm, segment: 'garden' as Segment, total: total / k, rent: rent / k, fees: 0, other: other / k })) : [{ room: '', segment: 'garden', total, rent, fees, other }]
   return { id: s(r.id), origin: 'cloudbeds', status: s(r.status), guest: r.guest_name || null, checkIn: ci, checkOut: co, nights: nightsOf(ci, co, r.nights), source: r.source || null, bookedAt: r.booked_at || null, balance: r.balance != null ? num(r.balance) : null, total, rent, fees, other, parts, basis: net != null ? 'room' : 'gross' }
 }
 /** One Guesty Botanica reservation as a stay; null when Cloudbeds already holds it or it is not a booking. */
@@ -185,7 +189,8 @@ export function inScope(st: SegStay, scope: Scope): (SegStay & { rooms: string[]
 export function narrow(all: { rooms: SegRoom[]; stays: SegStay[] }, scope: Scope, f: StayFilter | null | undefined, chan: (src: string | null) => string): { rooms: SegRoom[]; stays: (SegStay & { rooms: string[] })[] } {
   const types = f?.types?.length ? new Set(f.types) : null, wings = f?.wings?.length ? new Set(f.wings) : null, chans = f?.channels?.length ? new Set(f.channels) : null
   const rooms = all.rooms.filter(r => (scope === 'all' || r.segment === scope) && (!types || types.has(r.type)) && (!wings || wings.has(r.wing)))
-  const roomOk = types || wings ? new Set(rooms.map(r => r.name)) : null
+  // By room type or wing, a stay is kept by the room it is in whichever side that room is listed on (a hotel booking can sit in a Botanica room).
+  const roomOk = types || wings ? new Set(all.rooms.filter(r => (!types || types.has(r.type)) && (!wings || wings.has(r.wing))).map(r => r.name)) : null
   const stays: (SegStay & { rooms: string[] })[] = []
   // Rent only: the same stays with the fee income left out of what is added up (it is still carried, to show).
   const src = f?.rentOnly ? all.stays.map(st => ({ ...st, total: st.rent, parts: st.parts.map(p => ({ ...p, total: p.rent })) })) : all.stays
