@@ -100,8 +100,10 @@ export const FEATURES: Feature[] = [
   // BRIEFS (Jon, 2026-11-25): the morning plans page. Its own key so sending can be limited; its level
   // follows Open & Close until a role sets it (LEVEL_FALLBACK): view reads, edit changes and sends.
   { key: 'briefs',        label: 'Briefs',            path: '/briefs', group: 'Operations' },
-  // THE LEADERSHIP BOARD (Jon, 2026-11-06): the big picture — projects, tasks, vendor follow-ups, misc.
-  { key: 'leadership',    label: 'Leadership',        path: '/leadership', group: 'Operations' },
+  // THE BOARD (Jon, 2026-11-06 as "Leadership"; renamed and rebuilt 2026-11-25): tasks, projects, vendors,
+  // future projects and the offline listings Lighthouse adds. The key stays 'leadership' so every role
+  // keeps the level it had; only the name and the address changed (/leadership redirects).
+  { key: 'leadership',    label: 'Tasks & Projects',  path: '/tasks', group: 'Operations' },
   // FF&E Audit (2026-08-10, Jon): one phone link per unit, room by room, EN/ES. A furniture
   // PURCHASING list — deliberately not wired to Breezeway, maintenance or billing.
   { key: 'ffe',           label: 'FF&E Audit',        path: '/ffe', group: 'Properties' },
@@ -369,8 +371,8 @@ export function isOpenPath(path: string): boolean {
 // /front-desk is a view over two gated desks (welcome-calls + reservation-emails); its API requires
 // 'view' on either, so it needs no level of its own — whoever can see calls or notices sees it.
 // /scoreboard left this list on 2026-11-20: it is the Scorecards page now, gated by the `scorecards` key.
-// '/projects' (2026-11-06): a redirect to the Leadership board, which gates itself.
-export const UNGATED_PAGES = ['/', '/users', '/stay-window', '/welcome/password', '/doorcode', '/front-desk', '/projects', '/account']
+// '/projects' (2026-11-06) and '/leadership' (2026-11-25): redirects to the board at /tasks, which gates itself.
+export const UNGATED_PAGES = ['/', '/users', '/stay-window', '/welcome/password', '/doorcode', '/front-desk', '/projects', '/leadership', '/account']
 
 // ---- Permission LEVELS (2026-08-04). Each DB role (app_roles) assigns one level per feature. ----
 // off  = hidden + middleware-blocked (like the old toggle-off)

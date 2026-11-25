@@ -7,19 +7,24 @@
 // who · when · where. No sub-boards, no sections, no members — if you can see the board you can
 // see every row, and the filters do the narrowing. Comments are app_comments (entity_type 'board')
 // so they land in Messages like every other comment; photos are board_photos.
+//
+// 2026-11-25 (Jon: "revamp that… create and manage tasks, projects, vendors, or future projects…
+// offline listings should auto populate… attach photo or link… rename it too"): the board is
+// "Tasks & Projects" at /tasks now. Five kinds (lib/board-rules LANES); offline listings are rows the
+// channel check adds and closes (syncOfflineListings); a row takes links as well as photos, both in
+// board_photos (a link is any url that is not a file in our own bucket). No new table or column.
 import 'server-only'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getSettingFresh, setSetting } from '@/lib/app-settings'
 import { notify } from '@/lib/notify'
 import { rosterForPicker } from '@/lib/mentions'
 import { KNOWN_BUILDINGS } from '@/lib/segments'
+import { LANES, PRIORITIES, AUTO_LANE, BOARD_PATH, laneOf, priOf, isPhotoUrl, cleanLink, linkLabel, offlineFromSnapshot, planOfflineSync, snapshotFresh, type Lane } from '@/lib/board-rules'
 
-export const LANES = ['Projects', 'Tasks', 'Vendor follow-ups', 'Misc'] as const
-export type Lane = typeof LANES[number]
-export const PRIORITIES = ['low', 'normal', 'high', 'urgent'] as const
+export { LANES, PRIORITIES }
+export type { Lane }
 const str = (v: any): string => (typeof v === 'string' ? v : v == null ? '' : String(v))
-const laneOf = (v: any): Lane => (LANES as readonly string[]).includes(str(v)) ? (str(v) as Lane) : 'Tasks'
-const priOf = (v: any): string => (PRIORITIES as readonly string[]).includes(str(v)) ? str(v) : 'normal'
+const ITEM_LINK = (id: string) => BOARD_PATH + '?item=' + id
 const dateOf = (v: any): string | null => /^\d{4}-\d{2}-\d{2}$/.test(str(v)) ? str(v) : null
 const emailsOf = (v: any): string[] => Array.from(new Set((Array.isArray(v) ? v : []).map((e: any) => str(e).trim().toLowerCase()).filter((e: string) => /@/.test(e))))
 export const todayET = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date())
@@ -29,6 +34,10 @@ export type BoardItem = {
   priority: string; due: string | null; property: string | null; vendor: string | null; assignees: string[]
   comments: { id: string; by: string; body: string; at: string }[]
   photos: { id: string; url: string; caption: string | null; at: string }[]
+  /** Links attached to the row: a page in Lighthouse (a path) or a page outside it. */
+  links: { id: string; url: string; label: string; inApp: boolean; at: string }[]
+  /** Added by Lighthouse (an offline listing), not by a person. */
+  auto: boolean
   createdBy: string | null; createdAt: string; doneAt: string | null; doneBy: string | null; source: string | null
 }
 export type Proposal = {
@@ -38,11 +47,11 @@ export type Proposal = {
 export class BoardNotReady extends Error { needsMigration = true }
 const notReady = (e: any) => /board_items|board_photos|does not exist|schema cache/i.test(str(e?.message || e))
 
-const rowToItem = (r: any, comments: BoardItem['comments'], photos: BoardItem['photos']): BoardItem => ({
+const rowToItem = (r: any, comments: BoardItem['comments'], photos: BoardItem['photos'], links: BoardItem['links'] = []): BoardItem => ({
   id: String(r.id), lane: laneOf(r.lane), title: str(r.title), details: r.details || null,
   status: str(r.status) === 'done' ? 'done' : 'open', done: str(r.status) === 'done', priority: priOf(r.priority),
   due: r.due_on ? str(r.due_on).slice(0, 10) : null, property: r.property || null, vendor: r.vendor || null,
-  assignees: emailsOf(r.assignees), comments, photos,
+  assignees: emailsOf(r.assignees), comments, photos, links, auto: str(r.source) === 'auto',
   createdBy: r.created_by || null, createdAt: str(r.created_at), doneAt: r.done_at || null, doneBy: r.done_by || null, source: r.source || null,
 })
 
@@ -59,6 +68,8 @@ const ITEM_COLS = 'id,lane,title,details,status,priority,due_on,property,vendor,
  */
 export async function readBoard(opts: { countImportable?: boolean } = {}) {
   const sb = supabaseAdmin()
+  // Offline listings first, so the rows read below already match the channel check (at most every ten minutes).
+  await syncOfflineListings().catch(() => null)
   const since = new Date(Date.now() - 60 * 86400_000).toISOString()
   const { data: rows, error } = await sb.from('board_items').select(ITEM_COLS).or(`status.eq.open,done_at.gte.${since}`).order('created_at', { ascending: false }).limit(2000)
   if (error) { if (notReady(error)) throw new BoardNotReady(error.message); throw new Error(error.message) }
@@ -73,8 +84,13 @@ export async function readBoard(opts: { countImportable?: boolean } = {}) {
   const cBy: Record<string, BoardItem['comments']> = {}
   for (const c of ((comments || []) as any[])) (cBy[String(c.entity_id)] = cBy[String(c.entity_id)] || []).push({ id: String(c.id), by: str(c.author_email), body: str(c.body), at: str(c.created_at) })
   const pBy: Record<string, BoardItem['photos']> = {}
-  for (const p of ((photos || []) as any[])) (pBy[String(p.item_id)] = pBy[String(p.item_id)] || []).push({ id: String(p.id), url: str(p.url), caption: p.caption || null, at: str(p.created_at) })
-  const items = (rows || []).map((r: any) => rowToItem(r, cBy[String(r.id)] || [], pBy[String(r.id)] || []))
+  const lBy: Record<string, BoardItem['links']> = {}
+  for (const p of ((photos || []) as any[])) {
+    const k = String(p.item_id), url = str(p.url)
+    if (isPhotoUrl(url)) (pBy[k] = pBy[k] || []).push({ id: String(p.id), url, caption: p.caption || null, at: str(p.created_at) })
+    else (lBy[k] = lBy[k] || []).push({ id: String(p.id), url, label: str(p.caption) || linkLabel(url), inApp: url.startsWith('/'), at: str(p.created_at) })
+  }
+  const items = (rows || []).map((r: any) => rowToItem(r, cBy[String(r.id)] || [], pBy[String(r.id)] || [], lBy[String(r.id)] || []))
   // The property picker: every building we know, plus anything someone typed that is not one.
   const properties = Array.from(new Set(KNOWN_BUILDINGS.map(b => b.label).concat(items.map(i => i.property || '').filter(Boolean))))
   return { lanes: [...LANES], items, proposals: proposals.slice(-60), people: people.map(p => ({ email: p.email, name: p.name })), properties, importable }
@@ -153,8 +169,8 @@ async function tellAssigned(emails: string[], by: string, byName: string | null 
   if (!to.length) return
   try {
     const { tagAndNotify } = await import('@/lib/mentions')
-    await tagAndNotify({ text: `You were assigned: ${item.title}${item.due ? ' · due ' + item.due : ''}`, by, byName, title: item.title, link: '/leadership?item=' + item.id, picked: to, toSlack: 'dm', entity: { type: 'board', id: item.id } })
-  } catch { try { await notify(to, { kind: 'assignment', title: `${(byName || by.split('@')[0])} assigned you · ${item.title}`.slice(0, 200), link: '/leadership?item=' + item.id, actor: by, entity: { type: 'board', id: item.id } }) } catch { /* best effort */ } }
+    await tagAndNotify({ text: `You were assigned: ${item.title}${item.due ? ' · due ' + item.due : ''}`, by, byName, title: item.title, link: ITEM_LINK(item.id), picked: to, toSlack: 'dm', entity: { type: 'board', id: item.id } })
+  } catch { try { await notify(to, { kind: 'assignment', title: `${(byName || by.split('@')[0])} assigned you · ${item.title}`.slice(0, 200), link: ITEM_LINK(item.id), actor: by, entity: { type: 'board', id: item.id } }) } catch { /* best effort */ } }
 }
 
 export async function addItem(by: string, byName: string | null | undefined, inp: ItemInput): Promise<{ id: string } | { error: string }> {
@@ -202,9 +218,73 @@ export async function setItem(by: string, byName: string | null | undefined, id:
   return { ok: true }
 }
 
-export async function deleteItem(id: string): Promise<{ ok: true } | { error: string }> {
-  const { error } = await supabaseAdmin().from('board_items').delete().eq('id', id)
+export async function deleteItem(id: string, by = 'someone'): Promise<{ ok: true } | { error: string }> {
+  const sb = supabaseAdmin()
+  // A row Lighthouse added for an offline listing would come straight back if it were deleted while
+  // the listing is still offline. It is closed instead: closed by a person, it stays closed.
+  const { data: cur } = await sb.from('board_items').select('id,source,source_ref,status').eq('id', id).maybeSingle()
+  if (cur && str((cur as any).source) === 'auto' && str((cur as any).source_ref).split(':').length === 2) {
+    const { error } = await sb.from('board_items').update({ status: 'done', done_at: new Date().toISOString(), done_by: by, updated_at: new Date().toISOString() }).eq('id', id)
+    return error ? { error: error.message } : { ok: true }
+  }
+  const { error } = await sb.from('board_items').delete().eq('id', id)
   return error ? { error: error.message } : { ok: true }
+}
+
+// ── Links ───────────────────────────────────────────────────────────────────────────────────────
+/** Attach a link to a row: a page in Lighthouse or anything on the web. Kept beside the photos. */
+export async function addLink(by: string, itemId: string, raw: any, label: any): Promise<{ id: string } | { error: string }> {
+  if (!/^[0-9a-f-]{36}$/i.test(itemId)) return { error: 'That item is gone — reload.' }
+  const appHost = (() => { try { return new URL(process.env.NEXT_PUBLIC_APP_URL || '').hostname } catch { return '' } })()
+  const link = cleanLink(raw, appHost ? [appHost] : [])
+  if (!link) return { error: 'That is not a link. Paste the page address, for example the address of a guest issue, a task or a document.' }
+  const sb = supabaseAdmin()
+  const { data: item } = await sb.from('board_items').select('id').eq('id', itemId).maybeSingle()
+  if (!item) return { error: 'That item is gone — reload.' }
+  const { data, error } = await sb.from('board_photos').insert({ item_id: itemId, url: link.url, caption: str(label).trim().slice(0, 120) || linkLabel(link.url), uploaded_by: by }).select('id').single()
+  return error || !data ? { error: error?.message || 'could not attach' } : { id: String((data as any).id) }
+}
+/** Take a photo or a link off a row. (A photo's file stays in storage; only the row goes.) */
+export async function removeAttachment(id: string): Promise<{ ok: true } | { error: string }> {
+  if (!/^[0-9a-f-]{36}$/i.test(id)) return { error: 'That attachment is gone — reload.' }
+  const { error } = await supabaseAdmin().from('board_photos').delete().eq('id', id)
+  return error ? { error: error.message } : { ok: true }
+}
+
+// ── Offline listings: rows the channel check adds and closes ────────────────────────────────────
+// Jon, 2026-11-25: "Things that should auto populate should be offline listings, meaning not
+// connected to a channel." The channel check already writes a snapshot of every listing × channel
+// (lib/channel-health); lib/board-rules decides which of those belong here and what changes. Runs
+// when the board is read (at most every ten minutes an instance) and after each channel check.
+let _offlineAt = 0
+export async function syncOfflineListings(force = false): Promise<{ ran: boolean; added: number; closed: number; open: number }> {
+  const none = { ran: false, added: 0, closed: 0, open: 0 }
+  if (!force && Date.now() - _offlineAt < 10 * 60_000) return none
+  _offlineAt = Date.now()
+  const { readSnapshot } = await import('@/lib/channel-health')
+  const snap = await readSnapshot()
+  // No snapshot, or an old one: change nothing. A check that stopped running must not close rows.
+  if (!snapshotFresh(snap as any)) return none
+  const items = offlineFromSnapshot(snap as any)
+  const sb = supabaseAdmin()
+  const { data: rows, error } = await sb.from('board_items').select('id,source_ref,status,title').like('source_ref', 'offline:%').limit(3000)
+  if (error) return none
+  const plan = planOfflineSync(items, ((rows || []) as any[]).map(r => ({ id: String(r.id), ref: str(r.source_ref), status: str(r.status), title: str(r.title) })), Date.now().toString(36))
+  const now = new Date().toISOString()
+  let added = 0
+  for (const it of plan.insert) {
+    const { data, error: e1 } = await sb.from('board_items').insert({
+      lane: AUTO_LANE, title: it.title, details: 'To fix: reconnect it in Guesty, under Listings, Channels.', status: 'open', priority: it.priority,
+      property: it.building || null, assignees: [], created_by: 'lighthouse', source: 'auto', source_ref: it.ref,
+    }).select('id').single()
+    if (e1 || !data) continue                                       // another instance added it first: the key is unique
+    added++
+    await sb.from('board_photos').insert({ item_id: (data as any).id, url: '/channels?listing=' + encodeURIComponent(it.listingId), caption: 'Channels: ' + it.unit, uploaded_by: 'lighthouse' })
+  }
+  for (const r of plan.retitle) await sb.from('board_items').update({ title: r.title, updated_at: now }).eq('id', r.id)
+  for (const r of plan.close) await sb.from('board_items').update({ status: 'done', done_at: now, done_by: 'lighthouse', source_ref: r.ref, updated_at: now }).eq('id', r.id).eq('status', 'open')
+  for (const r of plan.release) await sb.from('board_items').update({ source_ref: r.ref }).eq('id', r.id)
+  return { ran: true, added, closed: plan.close.length, open: items.length }
 }
 
 // ── Import from the old Projects engine, once ───────────────────────────────────────────────────
@@ -315,7 +395,7 @@ export async function boardReminders(): Promise<{ reminded: number }> {
     const due = str(r.due_on).slice(0, 10)
     const late = due < today ? Math.round((Date.parse(today) - Date.parse(due)) / 86400_000) : 0
     try {
-      await notify(to, { kind: 'reminder', title: (late ? `${late}d late · ` : 'Due today · ') + str(r.title).slice(0, 160), link: '/leadership?item=' + r.id, entity: { type: 'board', id: String(r.id) } })
+      await notify(to, { kind: 'reminder', title: (late ? `${late}d late · ` : 'Due today · ') + str(r.title).slice(0, 160), link: ITEM_LINK(String(r.id)), entity: { type: 'board', id: String(r.id) } })
       await sb.from('board_items').update({ reminded_on: today }).eq('id', r.id)
       reminded++
     } catch { /* next */ }
@@ -339,8 +419,8 @@ export async function proposeFromNotes(text: string, by: string, people: { name:
   const roster = people.slice(0, 60).map(p => `${p.name} <${p.email}>`).join('\n')
   const props = KNOWN_BUILDINGS.map(b => b.label).join(', ')
   const system = `You turn meeting notes from a short-term-rental property management company (Stay Hospitality, South Florida) into a short list of ACTION ITEMS for the leadership board. Today is ${today}.
-Return ONLY a JSON array. Each element: {"lane":"Projects"|"Tasks"|"Vendor follow-ups"|"Misc","title":"imperative, under 90 chars","details":"one or two sentences of context from the notes, or empty","assignee":"email from the roster or empty","due":"YYYY-MM-DD or empty","priority":"low"|"normal"|"high"|"urgent","property":"one of the properties below, or empty"}.
-Rules: one item per real commitment or decision that needs a person to act; no duplicates; no items for things already done; "Vendor follow-ups" is for chasing an outside company or an owner; "Projects" only for multi-week initiatives; dates only when the notes say or clearly imply one (e.g. "by Friday" → that date); assign only when the notes name who owns it and that person is on the roster; property only when the notes name the building. 3–15 items. If there are no actions, return [].
+Return ONLY a JSON array. Each element: {"lane":"Tasks"|"Projects"|"Vendors"|"Future projects","title":"imperative, under 90 chars","details":"one or two sentences of context from the notes, or empty","assignee":"email from the roster or empty","due":"YYYY-MM-DD or empty","priority":"low"|"normal"|"high"|"urgent","property":"one of the properties below, or empty"}.
+Rules: one item per real commitment or decision that needs a person to act; no duplicates; no items for things already done; "Vendors" is for chasing an outside company or an owner; "Projects" only for multi-week initiatives that are under way; "Future projects" for an idea or plan with no start yet; dates only when the notes say or clearly imply one (e.g. "by Friday" → that date); assign only when the notes name who owns it and that person is on the roster; property only when the notes name the building. 3–15 items. If there are no actions, return [].
 Properties: ${props}
 Roster:\n${roster}`
   const r = await anthropicMessages(key, { model: pair.model, max_tokens: 4000, temperature: 0, system, messages: [{ role: 'user', content: body }] }, pair.fallback, 'leadership_notes')

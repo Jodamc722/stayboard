@@ -649,7 +649,7 @@ function YoursBand() {
         <span>Yours {total ? <span className="tabular-nums">{total}</span> : null}</span>
         {loading && !data && <Loader2 size={11} className="animate-spin" />}
         {data && shown.length === 0 && <span className="normal-case tracking-normal font-medium">— {total === 0 ? 'nothing has your name on it' : 'nothing due this week' + (later.length ? ', ' + later.length + ' later' : '')}</span>}
-        <Link href="/leadership" className="ml-auto normal-case tracking-normal text-[11.5px] font-semibold text-brand-700">Leadership board</Link>
+        <Link href="/tasks" className="ml-auto normal-case tracking-normal text-[11.5px] font-semibold text-brand-700">Tasks &amp; Projects</Link>
       </h2>
       {error && !data && <p className="px-1 text-[12px] text-rose-700">{error}</p>}
       <div className={LIST}>
@@ -664,7 +664,7 @@ function YoursBand() {
                   {busy === it.id ? <Loader2 size={10} className="animate-spin" /> : <I size={11} strokeWidth={3} />}
                 </button>
               </Tip>
-              <Link href={'/leadership?item=' + it.id} className="min-w-0 flex-1 flex items-center gap-x-1.5 flex-wrap">
+              <Link href={'/tasks?item=' + it.id} className="min-w-0 flex-1 flex items-center gap-x-1.5 flex-wrap">
                 <span className="text-[13px] font-semibold text-ink truncate max-w-full">{it.title}</span>
                 {it.priority === 'urgent' && <Tag tone="rose">urgent</Tag>}
                 {it.priority === 'high' && <Tag tone="amber">high</Tag>}

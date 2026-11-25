@@ -1,7 +1,7 @@
 // MY TASKS — what do I do today. Since 2026-11-06 this reads the LEADERSHIP BOARD (lib/board), not
 // the retired Projects engine: Jon, "everyone's tasks can live here". The shape is unchanged so the
 // Command Center's "My tasks" strip and Hub keep working; every row carries projectId 'board' so a
-// done-toggle goes to /api/leadership and "Open" goes to /leadership?item=<id>.
+// done-toggle goes to /api/leadership and "Open" goes to /tasks?item=<id>.
 // Grouped by when: overdue, today, this week, later, no date.
 import { NextRequest, NextResponse } from 'next/server'
 import { requireLevel } from '@/lib/access'
@@ -28,7 +28,7 @@ export async function GET(_req: NextRequest) {
       const item = {
         id: String(r.id), projectId: 'board', title: String(r.title), status: 'todo', due: r.due_on ? String(r.due_on).slice(0, 10) : null,
         priority: String(r.priority || 'normal'), section: r.lane || null, subtask: false, parent: null,
-        project: String(r.lane || 'Leadership'), oneOnOne: false, mine: true, where: r.property || null, role: 'assignee',
+        project: String(r.lane || 'Tasks'), oneOnOne: false, mine: true, where: r.property || null, role: 'assignee',
       }
       if (!item.due) groups.someday.push(item)
       else if (item.due < today) groups.overdue.push(item)

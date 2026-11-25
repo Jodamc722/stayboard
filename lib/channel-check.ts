@@ -138,6 +138,8 @@ export async function runChannelCheck(opts?: { health?: ChannelHealth }): Promis
 
   await writeSnapshot(next)
   try { revalidateTag(CHANNELS_CACHE_TAG) } catch { /* outside a request scope — the 10-minute TTL covers it */ }
+  // Tasks & Projects carries a row for each listing that is offline (Jon, 2026-11-25): bring it in line now.
+  try { const { syncOfflineListings } = await import('./board'); await syncOfflineListings(true) } catch { /* the board catches up the next time it is opened */ }
 
   const audits = await writeAudits(next)
   if (audits.error) errors.push(audits.error)

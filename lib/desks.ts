@@ -89,7 +89,7 @@ export const DESKS: Desk[] = [
   },
   {
     key: 'operations', label: 'Operations',
-    blurb: 'The field: the ops board, the cleaning schedule and week plan, Open & Close, maintenance, blocked units, upkeep and the Leadership board.',
+    blurb: 'The field: the ops board, the cleaning schedule and week plan, Open & Close, maintenance, blocked units, upkeep and Tasks & Projects.',
     views: [
       { to: '/plan', label: 'Ops board', hint: 'Every unit’s work today against the 4pm deadline; assign and add tasks' },
       { to: '/schedule', label: 'Schedule', hint: 'Turnovers by day: stage, assign and push to Breezeway' },
@@ -103,7 +103,8 @@ export const DESKS: Desk[] = [
       { to: '/blocked', label: 'Blocked units', hint: 'Units off the calendar right now, longest first, with the block note' },
       // Upkeep (Jon, 2026-10-03): the recurring programs — PM, deep cleans, A/C filters and coils, batteries, inspections, FF&E — late / due soon / on track, per unit.
       { to: '/upkeep', label: 'Upkeep', hint: 'PM audits, deep cleans, A/C filters & coils, batteries, inspections, FF&E — what is late, due soon and on track, per unit' },
-      { to: '/leadership', label: 'Leadership', hint: 'Everyone’s work on one screen — projects, tasks, vendor follow-ups, misc; filter by owner, property, due; meeting notes become tasks you approve one by one', match: ['/projects'] },
+      // Renamed and rebuilt 2026-11-25 (Jon: "revamp that… let's rename it too"): it was "Leadership" at /leadership.
+      { to: '/tasks', label: 'Tasks & Projects', hint: 'Tasks, projects, vendors and future projects, plus the listings that are offline; who, when and how urgent; group by due date, person or property', match: ['/projects', '/leadership'] },
       { to: '/audits', label: 'Quality', hint: 'Unit walks and what they found, dispatched to Breezeway', jump: true },
     ],
   },

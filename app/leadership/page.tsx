@@ -1,20 +1,11 @@
-// THE LEADERSHIP BOARD (Jon, 2026-11-06). Gated by the 'leadership' feature (admins by default;
-// Users → Roles switches it per role). Deep link: /leadership?item=<id> opens that item.
+// "LEADERSHIP" IS TASKS & PROJECTS NOW (Jon, 2026-11-25: "let's rename it too"). The board lives at
+// /tasks; this address is kept so every old link, bookmark and notification still lands on the row
+// it pointed at. Listed in UNGATED_PAGES: a redirect has nothing to gate; the board gates itself.
 import { redirect } from 'next/navigation'
-import { Shell } from '@/components/Shell'
-import { LeadershipBoard } from '@/components/LeadershipBoard'
-import { getAccess } from '@/lib/access'
 
 export const dynamic = 'force-dynamic'
 
-export default async function LeadershipPage({ searchParams }: { searchParams?: { item?: string } }) {
-  const access = await getAccess()
-  if (!access.user) redirect('/login')
-  const level = String(access.levels?.leadership || (access.role === 'admin' ? 'full' : 'off'))
-  if (level === 'off') redirect('/command')
-  return (
-    <Shell>
-      <LeadershipBoard initialItem={searchParams?.item || null} />
-    </Shell>
-  )
+export default function LeadershipMoved({ searchParams }: { searchParams?: { item?: string } }) {
+  const item = String(searchParams?.item || '')
+  redirect('/tasks' + (/^[0-9a-f-]{36}$/i.test(item) ? '?item=' + item : ''))
 }

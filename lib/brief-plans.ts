@@ -35,6 +35,9 @@ import {
   type Plan, type PlanKey, type PlanRow, type PlanSection, type PlanTag, type PlanGroup, type PlanEdits, type PlanSettings, type Tone,
 } from './brief-plan-rules'
 
+import { boardForBrief, laneOf as boardLane, daysLate as boardDaysLate, BOARD_NAME, BOARD_PATH, LANE_ONE, type RowLite, type BriefPick } from './board-rules'
+import { KNOWN_BUILDINGS } from './segments'
+
 const EDITS_KEY = 'brief_plan_edits', SETTINGS_KEY = 'brief_plan_settings'
 /** Today in Eastern time: the day a plan is for unless another is asked for. */
 export const planToday = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date())
@@ -52,6 +55,56 @@ const flagTags = (f: GuestFlag): PlanTag[] => {
   if (f.atRisk && f.risk) t.push({ text: 'At risk · ' + f.risk, tone: 'red' })
   else if (f.priority && f.also) t.push({ text: f.also, tone: 'amber' })
   return t.length ? t : [{ text: 'VIP', tone: 'amber' }]
+}
+
+// ── Tasks & Projects on the briefs ──────────────────────────────────────────────────────────────
+// Jon, 2026-11-25: "We can also have assignee and it should show on briefs pending and delayed." The
+// board's open rows (lib/board), read once a plan: what is DELAYED (past its date) first, then what is
+// PENDING for the day and the three after it, each with who holds it. Future projects stay off; an
+// offline listing is a count unless someone gave it a date. A market plan shows only the rows filed
+// under one of its buildings; the Ops plan shows them all.
+type BoardBrief = { rows: RowLite[]; nameOf: (email: string) => string }
+async function boardOpen(): Promise<BoardBrief | null> {
+  try {
+    const { data, error } = await supabaseAdmin().from('board_items').select('id,lane,title,status,priority,due_on,property,assignees').eq('status', 'open').limit(2000) // deliberate cap: open rows on one board
+    if (error) return null
+    const { rosterForPicker } = await import('./mentions')
+    const people = await rosterForPicker().catch(() => [] as { email: string; name: string }[])
+    const names = new Map(people.map(p => [p.email.toLowerCase(), p.name] as [string, string]))
+    const rows: RowLite[] = ((data || []) as any[]).map(r => ({
+      id: str(r.id), lane: str(r.lane), title: str(r.title), done: false, priority: str(r.priority) || 'normal', due: r.due_on ? str(r.due_on).slice(0, 10) : null, property: r.property ? str(r.property) : null,
+      assignees: (Array.isArray(r.assignees) ? r.assignees : []).map((e: any) => str(e).toLowerCase()).filter(Boolean),
+    }))
+    return { rows, nameOf: e => first(names.get(e) || e.split('@')[0].replace(/[._]/g, ' ')) }
+  } catch { return null }
+}
+const BUILDING_MARKET = new Map(KNOWN_BUILDINGS.map(b => [b.label.toLowerCase(), b.market as string] as [string, string]))
+function boardSection(b: BoardBrief | null, day: string, W: string, opts: { market?: string; always?: boolean } = {}): { section: PlanSection | null; pick: BriefPick<RowLite> | null } {
+  if (!b) return { section: null, pick: null }
+  const rows = opts.market ? b.rows.filter(r => !!r.property && BUILDING_MARKET.get(r.property.toLowerCase()) === opts.market) : b.rows
+  const pick = boardForBrief(rows, day)
+  const who = (r: RowLite) => (r.assignees.length ? r.assignees.map(b.nameOf).join(', ') : 'No owner')
+  const kind = (r: RowLite) => { const l = boardLane(r.lane); return l === 'Tasks' ? '' : LANE_ONE[l] }
+  const urgent = (r: RowLite): PlanTag[] => (r.priority === 'urgent' ? [{ text: 'Urgent', tone: 'red' }] : r.priority === 'high' ? [{ text: 'High', tone: 'amber' }] : [])
+  const line = (r: RowLite, tags: PlanTag[], tone: Tone): PlanRow => ({
+    id: 'tb:' + r.id, title: cut(r.title, 110), tone, tags: [...tags, ...urgent(r), ...(r.assignees.length ? [] : [{ text: 'No owner', tone: 'amber' as const }])],
+    meta: [r.assignees.length ? who(r) : '', kind(r), r.property || ''].filter(Boolean).join(' · ') || undefined, href: `${APP_URL}${BOARD_PATH}?item=${r.id}`,
+  })
+  const CAP_LATE = 8, CAP_NEXT = 8
+  const late = pick.late.map(r => { const n = boardDaysLate(r.due!, day); return line(r, [{ text: n + (n === 1 ? ' day late' : ' days late'), tone: 'red' }], 'red') })
+  const next = pick.today.map(r => line(r, [{ text: 'Due ' + W, tone: 'amber' }], 'amber')).concat(pick.soon.map(r => line(r, [{ text: 'Due ' + niceDay(r.due!), tone: 'grey' }], 'none')))
+  const listed = Math.min(late.length, CAP_LATE) + Math.min(next.length, CAP_NEXT)
+  const dated = pick.late.length + pick.today.length + pick.soon.length
+  if (!opts.always && !dated) return { section: null, pick }
+  const groups: PlanGroup[] = []
+  if (late.length) groups.push({ name: 'Delayed', meta: `${late.length} past ${late.length === 1 ? 'its' : 'their'} date`, rows: [], also: late.slice(0, CAP_LATE), more: late.length > CAP_LATE ? `and ${late.length - CAP_LATE} more delayed` : undefined })
+  const rest = Math.max(0, pick.pending - Math.min(pick.pending, listed))
+  if (next.length || pick.pending) groups.push({
+    name: 'Pending', meta: [`${pick.pending} open`, pick.noOwner ? `${pick.noOwner} with no owner` : ''].filter(Boolean).join(' · '), rows: [], also: next.slice(0, CAP_NEXT),
+    more: !next.length ? `Nothing is due ${W} or in the three days after` : rest > 0 ? `and ${rest} more with a later date or none` : undefined,
+  })
+  const more = pick.offline && !opts.market ? `${pick.offline} ${pick.offline === 1 ? 'listing is' : 'listings are'} offline: each is a row on ${BOARD_NAME}` : undefined
+  return { pick, section: { key: 'board', title: opts.market ? 'Tasks and projects here' : 'Tasks and projects', tone: late.length ? 'red' : 'none', groups, more, empty: `Nothing open on ${BOARD_NAME}.` } }
 }
 
 // ── Expected hours ──────────────────────────────────────────────────────────────────────────────
@@ -82,7 +135,7 @@ async function buildMarketPlan(key: 'broward' | 'miami' | 'north', day?: string)
   const sheet: any = d.sheet || {}, today: string = d.today
   // `today` is the day the plan is FOR. `ahead` is how far that is from now, and W is the word for it.
   const nAhead = Math.max(0, daysBetween(planToday(), today)), W = dayWord(nAhead)
-  const [autoRes0, reviewRes, pricer] = await Promise.all([upcomingAutoInspections(nAhead + 2).catch(() => [] as any[]), lowReviewInspections().catch(() => [] as any[]), cleanPricer()])
+  const [autoRes0, reviewRes, pricer, board] = await Promise.all([upcomingAutoInspections(nAhead + 2).catch(() => [] as any[]), lowReviewInspections().catch(() => [] as any[]), cleanPricer(), boardOpen()])
   // An arrival inspection for a guest who lands before the plan's day is not that day's work.
   const autoRes = (autoRes0 as any[]).filter(i => str(i.check_in) >= today)
   const rates = pricer.rates
@@ -184,6 +237,9 @@ async function buildMarketPlan(key: 'broward' | 'miami' | 'north', day?: string)
   // 7. Recurring work that has rolled forward at least a day.
   const late = other.filter(o => (o.late || 0) > 0 && o.state !== 'done').sort((a, b) => (b.late || 0) - (a.late || 0))
   if (late.length) sections.push({ key: 'late', title: 'Running late', rows: late.slice(0, 6).map((o, i) => ({ id: 'lt:' + o.lid + ':' + i, title: unitShort(o.unit), tone: 'amber' as Tone, tags: [{ text: o.late + (o.late === 1 ? ' day late' : ' days late'), tone: 'red' as const }], meta: cleanTitle(o.task) + (/UNASSIGNED/.test(o.assignee) ? ' · not assigned' : ' · with ' + personName(first(o.lead || o.assignee))) })) })
+  // 7b. Tasks & Projects filed under one of this market's buildings: delayed, and due now. Only when there is one.
+  const tb = boardSection(board, today, W, { market })
+  if (tb.section) sections.push(tb.section)
   // 8. Who is coming this week.
   const ahead: any[] = d.forward || []
   if (ahead.length) sections.push({ key: 'ahead', title: `Coming up, next ${d.lookaheadDays || 7} days`, rows: ahead.slice(0, 8).map((x: any, i: number) => ({ id: 'ah:' + i + ':' + str(x.when), title: unitShort(str(x.unit)), tags: flagTags(x), meta: `${str(x.guest)} · ${niceDay(str(x.when))}${x.nights && !x.long ? ' · ' + x.nights + ' nights' : ''}` })), more: ahead.length > 8 ? `+${ahead.length - 8} more on the board` : undefined })
@@ -224,8 +280,8 @@ async function buildOpsPlan(day?: string): Promise<Plan> {
   const d: any = await gather('full', day)
   const sheet: any = d.sheet || {}, today: string = d.today
   const nAhead = Math.max(0, daysBetween(planToday(), today)), W = dayWord(nAhead)
-  const [pricer, shiftsRes, salaried, staff, dir, doors, blocked, forecast] = await Promise.all([
-    cleanPricer(),
+  const [board, pricer, shiftsRes, salaried, staff, dir, doors, blocked, forecast] = await Promise.all([
+    boardOpen(), cleanPricer(),
     capped(getShifts(today, 'America/New_York')), capped(getSalaried()), capped(getStaff()),
     // The Today board ranks what is in front of the team now, so it is read for today's plan only.
     nAhead ? Promise.resolve(null) : capped(buildDirection(), 40_000), capped(doorBriefItems(today), 15_000), capped(blockedUnits(30)),
@@ -327,6 +383,11 @@ async function buildOpsPlan(day?: string): Promise<Plan> {
     pri.push({ id: 'pr:ex:' + slug(str(e.unit)) + ':' + slug(str(e.kind)).slice(0, 16), title: unitShort(str(e.unit)), tone: 'amber', tags: [{ text: 'Guest in unit', tone: 'amber' }], meta: cut(str(e.detail), 130), note: str(e.action) || undefined })
   for (const o of other.filter(o => /UNASSIGNED/.test(o.assignee) && o.dept === 'maintenance' && o.state !== 'done' && !(o.late > 0) && fresh(o.unit)).slice(0, 2))
     pri.push({ id: 'pr:tech:' + o.lid + ':' + slug(o.task).slice(0, 24), title: unitShort(o.unit), tone: 'amber', tags: [{ text: 'No tech', tone: 'amber' }], meta: cleanTitle(o.task), note: 'Put a technician on it or it rolls again tomorrow' })
+  // Tasks & Projects: what is past its date goes in the priorities as one line; the section has the rows.
+  const tb = boardSection(board, today, W, { always: true })
+  const tbLate = tb.pick ? tb.pick.late : []
+  if (tbLate.length) pri.push({ id: 'pr:tasks-late', title: `${tbLate.length} ${tbLate.length === 1 ? 'task is' : 'tasks are'} delayed`, tone: tbLate.some(r => r.priority === 'urgent') ? 'red' : 'amber', tags: [{ text: BOARD_NAME, tone: 'amber' }],
+    meta: tbLate.slice(0, 3).map(r => cut(r.title, 48) + (r.assignees.length && board ? ' (' + board.nameOf(r.assignees[0]) + ')' : ' (no owner)')).join(' · ') + (tbLate.length > 3 ? ` and ${tbLate.length - 3} more` : ''), href: `${APP_URL}${BOARD_PATH}` })
   const PRI_CAP = 10
 
   const sections: PlanSection[] = []
@@ -335,6 +396,7 @@ async function buildOpsPlan(day?: string): Promise<Plan> {
     rows: unassigned.slice().sort((a, b) => (b.sameDayArrival ? 1 : 0) - (a.sameDayArrival ? 1 : 0) || str(a.unit).localeCompare(str(b.unit), undefined, { numeric: true })).map(c => ({ id: 'un:' + c.lid, title: unitShort(c.unit), tone: 'red' as Tone,
       meta: [c.sameDayArrival ? 'Guest lands ' + timeOf(str(c.lid)) + ': assign this one first' : 'Checkout clean', sizing(c)].filter(Boolean).join(' · '), tags: [{ text: mkOf(c), tone: 'grey' as const }, ...(c.sameDayArrival ? [{ text: 'Same-day turn', tone: 'red' as const }] : [])] })) })
   sections.push({ key: 'schedule', title: 'The schedule: who is working', groups: schedule, empty: `Nobody has work on the board ${W}.`, more: shiftsRes ? undefined : 'Homebase could not be read: shift times are missing.' })
+  if (tb.section) sections.push(tb.section)
   // VIPs, big bookings and owners landing, with whether the unit is ready.
   const cleanOf: Record<string, any> = {}
   for (const c of cleans) cleanOf[str(c.lid)] = c
@@ -371,6 +433,7 @@ async function buildOpsPlan(day?: string): Promise<Plan> {
       ...(dayHours > 0 ? [{ label: 'Clean hours', value: hoursText(dayHours), note: crewFor(dayHours, pricer.rates.shiftHours) }] : []),
       { label: 'Not assigned', value: String(unassigned.length), tone: (unassigned.length ? 'red' : 'green') as Tone },
       { label: 'Same-day turns', value: String(sameDay.length), tone: (sameDay.length ? 'red' : 'none') as Tone },
+      ...(tbLate.length ? [{ label: 'Tasks delayed', value: String(tbLate.length), tone: 'red' as Tone, note: tb.pick ? tb.pick.pending + ' pending' : undefined }] : []),
       { label: 'Working ' + W, value: String(shiftsRes ? shifts.length : working.length), note: shiftsRes ? (idle.length ? idle.length + ' with nothing assigned' : 'on shift in Homebase') : 'with work on the board' },
     ],
     sections, board: { label: 'Open the Ops board', href: `${APP_URL}/plan` },

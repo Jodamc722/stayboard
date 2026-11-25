@@ -204,7 +204,7 @@ export async function POST(req: NextRequest) {
   if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
   const actorName = me.split('@')[0]
   const label = str(b.label) || type
-  const link = type === 'glitch' ? '/glitches?id=' + encodeURIComponent(id) : type === 'message' ? '/messages' : type === 'board' ? '/leadership?item=' + encodeURIComponent(id) : (str(b.link) || (type === 'task' ? '/plan' : null))
+  const link = type === 'glitch' ? '/glitches?id=' + encodeURIComponent(id) : type === 'message' ? '/messages' : type === 'board' ? '/tasks?item=' + encodeURIComponent(id) : (str(b.link) || (type === 'task' ? '/plan' : null))
   // THREAD FOLLOWERS: anyone who already commented here hears about the reply; on glitches the
   // creator hears about every comment.
   const followers: string[] = []

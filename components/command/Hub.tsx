@@ -695,7 +695,7 @@ function AddMine({ onAdded }: { onAdded: () => void }) {
     <div className="px-3 py-1.5 min-h-[44px] flex items-center gap-2">
       <Plus size={13} className="text-muted shrink-0" />
       <input value={draft} onChange={e => setDraft(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') add() }} disabled={busy}
-        placeholder="Add a task for yourself — it lands on the Leadership board" aria-label="Add a task for yourself" className="flex-1 min-w-0 bg-transparent text-[13px] py-1 focus:outline-none placeholder:text-muted/70" />
+        placeholder="Add a task for yourself. It lands on Tasks &amp; Projects" aria-label="Add a task for yourself" className="flex-1 min-w-0 bg-transparent text-[13px] py-1 focus:outline-none placeholder:text-muted/70" />
       {draft.trim() && <button onClick={add} disabled={busy} className={DARK}>{busy ? <Loader2 size={12} className="animate-spin" /> : 'Add'}</button>}
       {err && <span className="text-[11.5px] text-rose-700">{err}</span>}
     </div>
@@ -712,7 +712,7 @@ function MineRow({ it, late, pending, onChanged, lane }: { it: MineItem; late: b
       meta={it.project} err={err}
       actions={<>
         <button onClick={done} disabled={busy} className={GHOST} title="Mark done">{busy ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />} Done</button>
-        <Link href={'/leadership?item=' + it.id} prefetch={false} className={GHOST} title="Open on the Leadership board">Open</Link>
+        <Link href={'/tasks?item=' + it.id} prefetch={false} className={GHOST} title="Open on Tasks & Projects">Open</Link>
       </>} />
   )
 }
@@ -1090,7 +1090,7 @@ export function CommandHub({ d, live, roster, fixRows, claims, links, approvals,
           </section>
           <div className="space-y-2">
             <ChecklistStrip ck={ck} onTicked={reloadCk} />
-            <Section id="admin" label="Yours, optimize & fixes" Icon={FileText} tabs={['Yours', 'Optimize', 'Fixes']} top={<AddMine onAdded={reloadMine} />} items={sec(['Yours', 'Optimize', 'Fixes'])} hide={shownInNow} href="/leadership" hrefLabel="Leadership board" empty="nothing on your desk" right={laneStat('admin')} />
+            <Section id="admin" label="Yours, optimize & fixes" Icon={FileText} tabs={['Yours', 'Optimize', 'Fixes']} top={<AddMine onAdded={reloadMine} />} items={sec(['Yours', 'Optimize', 'Fixes'])} hide={shownInNow} href="/tasks" hrefLabel="Tasks &amp; Projects" empty="nothing on your desk" right={laneStat('admin')} />
           </div>
         </div>
       </div>

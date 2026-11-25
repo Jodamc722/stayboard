@@ -1,8 +1,10 @@
-// THE LEADERSHIP BOARD API (Jon, 2026-11-06). One standalone board, one flat table (lib/board).
+// THE BOARD API (Jon, 2026-11-06; renamed Tasks & Projects 2026-11-25, the address stays). One standalone board, one flat table (lib/board).
 //   GET                                      → lanes, items (open + done ≤60d), proposals, people, properties, importable
 //   POST { action: 'add', lane, title, details?, assignees?, due?, priority?, property?, vendor? }
 //   POST { action: 'set', id, ...patch }     → any field; status 'done' | 'open' completes / reopens
 //   POST { action: 'delete', id }
+//   POST { action: 'link', id, url, label? } → attach a link (a page in Lighthouse or on the web)
+//   POST { action: 'unattach', attachment }  → take a photo or a link off a row
 //   POST { action: 'propose', text, source? } → AI reads the notes, returns proposals (saved)
 //   POST { action: 'approve', id, ...edits }  → one proposal becomes one item
 //   POST { action: 'skip', id }
@@ -11,7 +13,7 @@
 // /api/leadership/photo.
 import { NextRequest, NextResponse } from 'next/server'
 import { requireLevel } from '@/lib/access'
-import { readBoard, addItem, setItem, deleteItem, proposeFromNotes, settleProposal, openProposal, isAssignee, importFromProjects, BoardNotReady, LANES, type Lane } from '@/lib/board'
+import { readBoard, addItem, setItem, deleteItem, addLink, removeAttachment, proposeFromNotes, settleProposal, openProposal, isAssignee, importFromProjects, BoardNotReady, LANES, type Lane } from '@/lib/board'
 import { rosterForPicker } from '@/lib/mentions'
 
 export const dynamic = 'force-dynamic'
@@ -62,7 +64,15 @@ export async function POST(req: NextRequest) {
       return 'error' in r ? bad(r.error) : NextResponse.json({ ok: true })
     }
     if (action === 'delete') {
-      const r = await deleteItem(str(b.id))
+      const r = await deleteItem(str(b.id), me)
+      return 'error' in r ? bad(r.error) : NextResponse.json({ ok: true })
+    }
+    if (action === 'link') {
+      const r = await addLink(me, str(b.id), b.url, b.label)
+      return 'error' in r ? bad(r.error) : NextResponse.json({ ok: true, id: r.id })
+    }
+    if (action === 'unattach') {
+      const r = await removeAttachment(str(b.attachment))
       return 'error' in r ? bad(r.error) : NextResponse.json({ ok: true })
     }
     if (action === 'propose') {

@@ -322,7 +322,7 @@ export async function checkHours(read: Pick<Read, 'vendor' | 'number' | 'periodF
     if (hb && before.has(hb)) { lines.push(line(p.name, said(p), amount, 'duplicate', `${hb}'s hours for these days are already on ${before.get(hb)}.`, { unit: hb })); continue }
     const j = judgeHours({ reg: p.reg, ot: p.ot }, worked, { known: !!hb || !!rec, weekly, period, rate, otRate })
     // Whose list the person is on in Lighthouse, said only when it disagrees with who is billing.
-    const tag = agency && rec && rec.agency !== agency.key ? ` Lighthouse has this person ${rec.agency ? 'under ' + labelOf(rec.agency) : 'with no agency'}, not ${agency.label}.` : ''
+    const tag = agency && rec && rec.agency !== agency.key ? (rec.agency ? ` Lighthouse lists this person under ${labelOf(rec.agency)}, not ${agency.label}.` : ` Lighthouse has no agency set for this person.`) : ''
     lines.push(line(p.name, said(p), amount, j.verdict, j.why + tag, { unit: hb || rec?.name || null, risk: j.risk }))
   }
 

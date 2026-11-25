@@ -178,8 +178,8 @@ export const AI_TASKS: AiTask[] = [
   { key: 'expectations-auto', title: 'Eve — expectation notes (the Monday run)', group: 'Background', def: 'sonnet', background: true, inherit: 'expectations',
     what: 'The same weekly evidence-pack call as the expectations desk, when the Monday schedule runs it rather than a person pressing Run.',
     matters: 'Counts against the automatic daily cap. A run stopped by the cap can be started by hand from the Eve tab → Expectations.' },
-  { key: 'leadership_notes', title: 'Leadership board — meeting notes into proposed tasks', group: 'Operations', def: 'sonnet', background: false,
-    what: 'Reads pasted meeting notes and proposes action items for the Leadership board; each is approved by a person before it exists.',
+  { key: 'leadership_notes', title: 'Tasks & Projects: meeting notes into proposed tasks', group: 'Operations', def: 'sonnet', background: false,
+    what: 'Reads pasted meeting notes and proposes action items for Tasks & Projects; each is approved by a person before it exists.',
     matters: 'Leadership reads the list once and approves or skips each line. A weak model invents tasks or misses the commitment that mattered.' },
   // FILE READING (2026-09-29, lib/files/extract.ts). Jon: "Adam and Eve should have file upload…
   // for learning or reference for handbooks, SOPs". A PDF (typed or scanned) or a photo of a page
