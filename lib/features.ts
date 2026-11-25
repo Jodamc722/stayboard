@@ -340,6 +340,8 @@ export const OPEN_PREFIXES = [
   // on their phone, English or Spanish, with a Done button. No Lighthouse account — housekeepers and
   // technicians do not have one — so the code is the capability, checked in /api/public/training.
   '/learn/',
+  // /hire/<code>: the form a new hire fills in after hiring (Jon, 2026-11-25). No login; the code is the key, and nothing it sends does anything until a manager approves it on Training, People.
+  '/hire/',
   // HER INSPECTION REPORT (Jon, 2026-11-06: "Personal link shared by supervisor or managers"). /ir/<code>
   // is one housekeeper, five inspections, in her language. No login: the code is the capability,
   // checked in /api/public/inspection-report. Not /r/ because owner reports already live there.

@@ -12,6 +12,7 @@ import { Loader2, RefreshCw, Plus, Play, Check, Copy, Link2, Pencil, Archive, Ro
 import { LeanHead, Pill, Tag, IconBtn, LeanList, LeanRow, LeanEmpty, LeanTabs, LeanPick, Tip } from '@/components/lean'
 import { Sheet } from '@/components/Sheet'
 import { ProfileSheet, OnboardSheet, PushSheet, QuizEditor, TRACKS as TRACK_OPTS } from '@/components/TeamOnboarding'
+import { HireRequests } from '@/components/HireRequests'
 
 type Lang = 'en' | 'es'
 type Item = {
@@ -201,6 +202,8 @@ export function TrainingDesk() {
         </>
       ) : null}
 
+      {/* New hires send their own details through a link; they wait here until someone approves (lib/hire). */}
+      {tab === 'people' && data && can.edit ? <HireRequests say={say} onChanged={() => load(true)} onOpen={setProfileKey} /> : null}
       {tab === 'people' && data && can.edit ? (
         <PeopleView people={people} byPerson={byPerson} itemById={itemById} today={today} lang={lang} onb={data.onboarding || {}}
           onProfile={setProfileKey} onOnboard={(p) => setOnboarding(p ? { key: p.key, name: p.name, email: p.email, market: p.market } : {})} onPush={() => setPushing(true)}
