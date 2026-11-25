@@ -175,6 +175,8 @@ export async function runGardenDesks(out: GardenSyncResult): Promise<void> {
   try { const { syncGardenHomebase } = await import('./homebase'); out.homebase = await syncGardenHomebase() } catch (e: any) { out.errors.push(`homebase: ${e?.message || e}`) }
   // The Guesty ⇄ Cloudbeds calendar link's safety net (lib/garden/calendar-link): does nothing until a room is linked.
   try { const { reconcileLinked } = await import('./calendar-link'); const r = await reconcileLinked('sync'); if (r.errors.length) out.errors.push(`calendar link: ${r.errors.join('; ').slice(0, 200)}`) } catch (e: any) { out.errors.push(`calendar link: ${e?.message || e}`) }
+  // …and the audit Adam reads: every Botanica room compared across both systems, nothing written. At most every 25 minutes.
+  try { const L = await import('./calendar-link'); const a = (await L.linkSettings()).audit; if (!a || Date.now() - Date.parse(a.at) > 25 * 60_000) await L.auditAll() } catch { /* the audit never fails the sync */ }
 }
 
 /** arrival_tomorrow / departure_today, once per reservation per day (stamped in evidence-free form on app_settings). */

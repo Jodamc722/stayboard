@@ -71,6 +71,7 @@ const TOOLS = [
   { name: 'notes', description: "Every front-desk note on reservations arriving, in house or departing over the next week — the note text, the tags read from it, the guest, room and dates. Use it to answer 'who is VIP', 'whose car is …', 'who needs an early check-in', 'what did the desk note about room 412'.", input_schema: { type: 'object', properties: { tag: { type: 'string', description: 'optional tag key to filter: prepaid, preauth, vouchers, vip, fb, topfloor, poolview, nomove, upg_pending, upg, lco, eci, access, connecting, pet, nohk, ccd, hotelcollect, delivery, noshow, issue, vehicle' } } } },
   { name: 'doc_search', description: "Search the hotel's uploaded documents (handbook files, SOPs, policies, training, reference) for the passages that answer a question. Use for anything about how the hotel DOES something or what its policy IS.", input_schema: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] } },
   { name: 'doc_read', description: "Read one uploaded hotel document in full (title, partial match fine), or pass nothing to list them.", input_schema: { type: 'object', properties: { title: { type: 'string' } } } },
+  { name: 'calendar_link', description: "The Guesty ⇄ Cloudbeds calendar link for the Botanica rooms: which rooms are linked, whether the instant notifications are on, rooms whose last write failed and are being retried, what the link last did, and the latest audit of every Botanica room — double bookings (a guest in both systems the same night), nights held in one system and still on sale in the other, and linked rooms out of step. Pass fresh=true to run the audit now (about 20 seconds; it writes nothing). Use for 'is the calendar sync healthy', 'any double bookings', 'is room 1103 blocked in both'.", input_schema: { type: 'object', properties: { fresh: { type: 'boolean' }, room: { type: 'string', description: 'optional room number to narrow to' } } } },
   { name: 'ask', description: "When you do not know something about the hotel that a person should tell you (a policy, a rule, who handles what), file the question so the GM answers it on Adam's page. The answer becomes a memory.", input_schema: { type: 'object', properties: { question: { type: 'string' }, context: { type: 'string', description: 'why it came up' }, subject: { type: 'string' } }, required: ['question'] } },
   { name: 'remember', description: 'Save something you were told about the hotel so you know it next time (a rule, a fact about a room or a guest, a preference). Only for things a person told you, never your own guesses.', input_schema: { type: 'object', properties: { content: { type: 'string' }, kind: { type: 'string', description: 'fact | rule | preference | person' }, subject: { type: 'string', description: 'a room number, a guest name, a vendor, or "hotel"' } }, required: ['content'] } },
 ]
@@ -116,6 +117,20 @@ async function runTool(name: string, args: any, by: string | null): Promise<any>
     }
     if (name === 'doc_search') { const { searchAdamDocs } = await import('./adam-docs'); return await searchAdamDocs(String(args?.query || '')) }
     if (name === 'doc_read') { const { readAdamDoc } = await import('./adam-docs'); return await readAdamDoc(args?.title ? String(args.title) : undefined) }
+    if (name === 'calendar_link') {
+      const L = await import('./calendar-link')
+      const [st0, n] = await Promise.all([L.linkSettings(), L.notificationState()])
+      const audit = args?.fresh || !st0.audit ? await L.auditAll() : st0.audit
+      const st = args?.fresh ? await L.linkSettings() : st0
+      const room = String(args?.room || '').trim(), only = <T extends { room: string }>(a: T[]) => room ? a.filter(x => x.room === room) : a
+      return {
+        on: st.rooms.length > 0, linkedRooms: st.rooms, instant: { guesty: n.guesty.bookings, cloudbeds: n.cloudbeds.subscribed, lastGuestyEvent: n.guesty.lastEventAt, lastCloudbedsEvent: n.cloudbeds.lastEventAt },
+        failing: Object.entries(st.pending).map(([r, p]) => ({ room: r, ...p })), ignoredCloudbedsBlocks: st.ignore,
+        audit: { at: audit.at, healthy: audit.ok, roomsChecked: audit.rooms, nightsAhead: audit.nights, nightsByKind: audit.counts, problems: only(audit.items).slice(0, 40), errors: audit.errors },
+        recent: only(st.log).slice(0, 15),
+        meaning: { double: 'a guest in both systems the same night — act now', drift: 'a linked room where one side holds a night the other still sells', guesty_open: 'not linked: held in Cloudbeds but still bookable in Guesty', cloudbeds_open: 'not linked: held in Guesty with no block in Cloudbeds (the blanket AIRBNB block covers these today)' },
+      }
+    }
     if (name === 'ask') { const q = String(args?.question || '').trim().slice(0, 500); if (!q) return { error: 'question required' }; const db = supabaseAdmin(); const { data: dup } = await db.from('garden_agent_questions').select('id').eq('status', 'open').eq('question', q).limit(1); if (dup?.length) return { ok: true, already: true }; const { data } = await db.from('garden_agent_questions').insert({ question: q, context: args?.context ? String(args.context).slice(0, 500) : null, subject: args?.subject ? String(args.subject).slice(0, 80) : null }).select('id').single(); return { ok: true, id: data?.id } }
     if (name === 'remember') { const id = await adamRemember({ content: args?.content, kind: args?.kind, subject: args?.subject, by, source: 'chat' }); return { ok: !!id, id } }
     return { error: 'unknown tool' }
