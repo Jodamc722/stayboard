@@ -5,10 +5,14 @@
 // will respond to me only with what the documents are, steps etc."
 //
 // So: forward, cc or bcc any email to jon+review@stay-hospitality.com. Lighthouse reads the message
-// and its attachments and answers JON ONLY, in the same conversation: what the email is, what each
-// document is, and the steps needed, in order. Nobody else on the email is ever answered, whoever
-// sent it. A plus-address lands in jon@'s own inbox, so there is nothing to set up.
-import { addressOf, skipReason as baseSkip, type MailHeaders, type MailPart } from './clean-invoice-mail-rules'
+// and its attachments and answers in the same conversation: what the email is, what each document is,
+// and the steps needed, in order. A plus-address lands in jon@'s own inbox, so there is nothing to set up.
+//
+// WHO IS ANSWERED (Jon, 2026-11-25: "make sure jon+review email get sent to me so I see in my inbox …
+// and it always respond to the person who emailed it"): the person who emailed it when they are one of
+// ours, with Jon copied; Jon alone when he sent it or when the sender is outside Stay. Nobody else on
+// the email is answered (`answerTo` in the invoice-mail rules, shared by both addresses).
+import { addressOf, nameOf, answerTo, skipReason as baseSkip, type MailHeaders, type MailPart } from './clean-invoice-mail-rules'
 
 export const REVIEW_ADDRESS = 'jon+review@stay-hospitality.com'
 export const REVIEW_MAILBOX = 'jon@stay-hospitality.com'
@@ -201,7 +205,7 @@ export function fileTag(name: string): string {
 const cleanSubject = (v: string) => String(v || '').replace(/^\s*((re|fwd?):\s*)+/i, '').trim()
 const personOf = (v: string) => { const m = String(v || '').match(/^\s*"?([^"<]*?)"?\s*</); return (m && m[1].trim()) || String(v || '').replace(/[<>]/g, '').trim() }
 
-export type ReviewMeta = { from: string; subject: string; unread: { name: string; why: string }[]; error?: string; /** how many of the email's files are attached to this answer again */ attached?: number; /** files that could not be attached again (too large) */ notAttached?: number }
+export type ReviewMeta = { from: string; subject: string; unread: { name: string; why: string }[]; error?: string; /** who the answer goes to, in words, when it is not Jon alone */ sentTo?: string; /** how many of the email's files are attached to this answer again */ attached?: number; /** files that could not be attached again (too large) */ notAttached?: number }
 
 /** The email Jon gets. Everything the model wrote is escaped: it is text, never markup. */
 export function reviewHtml(r: Review, meta: ReviewMeta): string {
@@ -242,8 +246,16 @@ export function reviewHtml(r: Review, meta: ReviewMeta): string {
   const files = meta.attached
     ? `The ${meta.attached === 1 ? 'file is' : meta.attached + ' files are'} attached to this email again${meta.notAttached ? ` (${meta.notAttached} too large to attach: on the original email)` : ''}. `
     : meta.notAttached ? 'The files are on the original email in this conversation. ' : ''
-  body += `<tr><td style="padding:22px 24px 24px"><div style="border-top:1px solid ${LINE};padding-top:14px;font:12.5px/1.5 ${F};color:${MUTED}">Sent to you only. Nobody else on this email was answered. ${files}Written by Lighthouse from the email and its attachments: check a name, date or amount against the document before you act on it.</div></td></tr>`
+  body += `<tr><td style="padding:22px 24px 24px"><div style="border-top:1px solid ${LINE};padding-top:14px;font:12.5px/1.5 ${F};color:${MUTED}">${meta.sentTo ? 'Sent to ' + esc(meta.sentTo) : 'Sent to you only'}. Nobody else on this email was answered. ${files}Written by Lighthouse from the email and its attachments: check a name, date or amount against the document before you act on it.</div></td></tr>`
   return `<div style="background:#f1efe8;padding:24px 10px"><table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="max-width:640px;margin:0 auto;background:#ffffff;border:1px solid ${LINE};border-radius:14px;border-collapse:separate">${body}</table></div>`
+}
+
+/** Who a review is sent to, and the words for its last line. */
+export function reviewRecipients(fromHeader: string): { to: string[]; cc: string[]; sentTo?: string } {
+  const who = answerTo(addressOf(fromHeader), REVIEW_MAILBOX)
+  if (!who.cc.length) return who
+  const name = nameOf(fromHeader).split(/\s+/)[0]
+  return { ...who, sentTo: `${name && !/@/.test(name) ? name : who.to[0]} and Jon` }
 }
 
 /** One line for the list on the page. */

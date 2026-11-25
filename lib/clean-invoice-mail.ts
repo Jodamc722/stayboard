@@ -15,7 +15,7 @@ import 'server-only'
 import { accessTokenFor, forgetToken, sendGmail } from './gmail-send'
 import { getSetting, setSetting } from './app-settings'
 import { submitInvoice } from './clean-invoices'
-import {
+import { answerTo,
   INVOICE_ADDRESS, INVOICE_MAILBOX, REPLY_TAG, MAX_PER_DAY, EMPTY_STATE, cleanState, isTeam, isReply, addressOf, nameOf, skipReason, invoiceFiles, mediaTypeOf,
   headline, replySubject, teamReplyHtml, outsideReplyHtml, noFileHtml,
   type MailHeaders, type MailPart, type MailState, type Handled, type AuditResult,
@@ -155,7 +155,8 @@ export async function scanInvoiceMail(opts: { force?: boolean; peek?: boolean; b
       state.handled.unshift(rec); await save(state, by)
 
       if (team) {
-        const s = await sendGmail({ fromEmail: INVOICE_MAILBOX, to: [from], subject, html: teamReplyHtml(results, APP_URL, { skipped: left }), source: 'invoice-mail', ...thread })
+        // To the person who emailed it, with Jon copied so every audit is in his inbox too (2026-11-25).
+        const s = await sendGmail({ fromEmail: INVOICE_MAILBOX, ...answerTo(from, INVOICE_MAILBOX), subject, html: teamReplyHtml(results, APP_URL, { skipped: left }), source: 'invoice-mail', ...thread })
         rec.replied = s.ok; if (!s.ok) rec.error = s.error
       } else {
         // The audit goes to Jon (and anyone at Stay the sender wrote to), never to the outside sender.

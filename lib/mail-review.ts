@@ -1,5 +1,5 @@
 // EMAIL REVIEW (Jon, 2026-11-23). Forward, cc or bcc any email to jon+review@stay-hospitality.com and
-// Lighthouse reads it with its attachments and answers Jon only, in the same conversation: what the
+// Lighthouse reads it with its attachments and answers the person who emailed it (when they are one of ours) and Jon, in the same conversation: what the
 // email is, what each document is, and the steps needed. The rules are in lib/mail-review-rules.ts.
 //
 // The same mechanism as invoices by email (lib/clean-invoice-mail) and owner emails (lib/owner-mail):
@@ -16,7 +16,7 @@ import { modelPairFor } from './ai-models'
 import { standingRulesForPrompt } from './eve/memory'
 import { replySubject, type MailHeaders, type MailPart } from './clean-invoice-mail-rules'
 import {
-  REVIEW_ADDRESS, REVIEW_MAILBOX, MAX_REVIEWS_PER_DAY, EMPTY_REVIEW_STATE, REVIEW_PROMPT, cleanReviewState, skipReason, pickDocs, docKind, imageType, mailText,
+  REVIEW_ADDRESS, REVIEW_MAILBOX, reviewRecipients, MAX_REVIEWS_PER_DAY, EMPTY_REVIEW_STATE, REVIEW_PROMPT, cleanReviewState, skipReason, pickDocs, docKind, imageType, mailText,
   parseReview, reviewHtml, reviewLine, addressOf, threadText, isHeavy, realParts, MAX_ATTACH_BACK, type ReviewState, type Reviewed, type Review, type ThreadMsg,
 } from './mail-review-rules'
 import { xlsxCsv } from './xlsx-read'
@@ -211,10 +211,12 @@ export async function scanReviewMail(opts: { force?: boolean; peek?: boolean; by
         files.push({ filename: p.filename, content: bytes, contentType: (p.mimeType || 'application/octet-stream').split(';')[0] }); back += p.size
       }
 
-      // TO JON ONLY. Never to the sender, never to anyone else on the email.
+      // TO THE PERSON WHO EMAILED IT, WITH JON COPIED (2026-11-25); to Jon alone when he sent it or
+      // the sender is outside Stay. Never to anyone else on the email.
+      const who = reviewRecipients(h.from)
       const answer = (attached: number, notAttached: number) => ({
-        fromEmail: REVIEW_MAILBOX, to: [REVIEW_MAILBOX], subject: replySubject(h.subject), source: 'mail-review',
-        html: reviewHtml(review || parseReview(''), { from: h.from, subject: h.subject, unread, error: problem || undefined, attached, notAttached }),
+        fromEmail: REVIEW_MAILBOX, to: who.to, cc: who.cc, subject: replySubject(h.subject), source: 'mail-review',
+        html: reviewHtml(review || parseReview(''), { from: h.from, subject: h.subject, unread, error: problem || undefined, attached, notAttached, sentTo: who.sentTo }),
         threadId: String(m.threadId || ''), inReplyTo: h.messageId, references: (h.references + ' ' + h.messageId).trim(),
       })
       let s = await sendGmail({ ...answer(files.length, left), attachments: files, largeUpload: true })

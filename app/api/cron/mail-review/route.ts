@@ -1,5 +1,5 @@
 // EMAIL REVIEW, EVERY 10 MINUTES (lib/mail-review). Reads mail forwarded, copied or bcc'd to
-// jon+review@stay-hospitality.com and answers Jon only: what the email is, what each document is, and
+// jon+review@stay-hospitality.com and answers the person who emailed it (one of ours) and Jon: what the email is, what each document is, and
 // the steps needed. Does nothing until the switch on My account is on.
 // BARE PATH ON PURPOSE — a Vercel cron pointed at a path WITH A QUERY STRING never fires.
 import { NextRequest, NextResponse } from 'next/server'

@@ -21,6 +21,19 @@ export const REPLY_TAG = 'Invoice check'
 const OURS = /@(stay-hospitality\.com|staysoflo\.com)$|^guillermo\.?stayhospitality@gmail\.com$/i
 export const isTeam = (email: string): boolean => OURS.test(String(email || '').trim().toLowerCase())
 
+/**
+ * WHO GETS THE ANSWER (Jon, 2026-11-25: "make sure jon+review email get sent to me so I see in my
+ * inbox. Same with invoices, and it always respond to the person who emailed it").
+ *   - one of ours wrote in: the answer goes to them, with Jon copied, so it is in his inbox too;
+ *   - Jon wrote in himself (from his address or one of its plus-addresses): to Jon;
+ *   - anyone outside Stay: to Jon only. The full answer never goes to an outside sender.
+ */
+export function answerTo(from: string, mailbox: string): { to: string[]; cc: string[] } {
+  const f = String(from || '').trim().toLowerCase(), me = mailbox.trim().toLowerCase()
+  if (!isTeam(f) || f.replace(/\+[^@]*@/, '@') === me) return { to: [mailbox], cc: [] }
+  return { to: [f], cc: [mailbox] }
+}
+
 export type MailHeaders = { from: string; to: string; cc: string; bcc?: string; deliveredTo: string; subject: string; autoSubmitted: string; precedence: string; messageId: string; references: string; inReplyTo: string }
 export type MailPart = { filename: string; mimeType: string; size: number; attachmentId: string; inline: boolean }
 
