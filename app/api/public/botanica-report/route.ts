@@ -66,6 +66,19 @@ export async function GET(req: NextRequest) {
       if (pics.length) bannerCands.push({ name, url: str(pics[0]), count: pics.length, full: isFull })
     }
     if (!ids.length) return NextResponse.json({ ok: false, error: 'No Botanica listings found' }, { status: 500 })
+    // UNITS LIVE NOW (Jon, 2026-11-25: "whatever is active units — they kept some"). Guesty lists a few units the
+    // hotel keeps and sells itself in Cloudbeds; those are not Botanica inventory, so the last phase divides by the
+    // listings less those (lib/garden/botanica-active). Stays are untouched: every Botanica booking still counts.
+    // If the check cannot be made, the phase's own number stands.
+    let liveUnits = PHASES[PHASES.length - 1].units
+    try {
+      const { hotelKeptRooms } = await import('@/lib/garden/botanica-active')
+      const kept = await hotelKeptRooms()
+      const n = ((listings || []) as any[]).filter(l => ids.includes(String(l.id))).filter(l => { const m = str(l.nickname || l.title).match(/\b(\d{3,4})\b/); return !(m && kept.has(m[1])) }).length
+      if (n > 0) liveUnits = n
+    } catch { /* keep the phase's number */ }
+    const lastPhase = PHASES[PHASES.length - 1].from
+    const inv = (d: string) => (d >= lastPhase ? liveUnits : unitsOn(d))
     // Banner photo: prefer a "Full"/building hero (usually the exterior), then the listing with the most photos.
     bannerCands.sort((a, b) => (a.full === b.full ? 0 : a.full ? -1 : 1) || b.count - a.count || a.name.localeCompare(b.name))
     const autoBanner = bannerCands.length ? bannerCands[0].url : null
@@ -143,7 +156,7 @@ export async function GET(req: NextRequest) {
 
     const days: { date: string; dow: string; inv: number; rns: number; rev: number; cleaning: number; arr: number; arrNights: number; arrLead: number; arrLeadCnt: number }[] = []
     for (let d = OPEN_DATE; d <= lastDay; d = addDays(d, 1)) {
-      days.push({ date: d, dow: dow(d), inv: unitsOn(d), rns: rns[d] || 0, rev: rev[d] || 0, cleaning: cln[d] || 0, arr: arrCnt[d] || 0, arrNights: arrNts[d] || 0, arrLead: arrLead[d] || 0, arrLeadCnt: arrLeadCnt[d] || 0 })
+      days.push({ date: d, dow: dow(d), inv: inv(d), rns: rns[d] || 0, rev: rev[d] || 0, cleaning: cln[d] || 0, arr: arrCnt[d] || 0, arrNights: arrNts[d] || 0, arrLead: arrLead[d] || 0, arrLeadCnt: arrLeadCnt[d] || 0 })
     }
 
     const { data: syncSt } = await db.from('guesty_sync_status').select('last_sync_at').eq('entity', 'reservations').maybeSingle()
@@ -179,7 +192,7 @@ export async function GET(req: NextRequest) {
         for (const k of Object.keys(mo)) mo[k] = Math.round(mo[k] * 100) / 100
       }
     }
-    return NextResponse.json({ ok: true, label: 'Botanica', openedOn: PHASES[0].from, today, through: lastDay, bannerImage, bannerOverride, bannerOptions, lastSync, phases: PHASES, days, reconcile })
+    return NextResponse.json({ ok: true, label: 'Botanica', openedOn: PHASES[0].from, today, through: lastDay, bannerImage, bannerOverride, bannerOptions, lastSync, phases: PHASES.map((p, i) => (i === PHASES.length - 1 ? { ...p, units: liveUnits } : p)), days, reconcile })
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 200) }, { status: 500 })
   }
