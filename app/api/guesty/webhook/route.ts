@@ -62,6 +62,13 @@ export async function POST(req: NextRequest) {
   try { body = JSON.parse(raw) } catch { /* empty */ }
   const event = String(body?.event || req.headers.get('x-guesty-event') || '')
   noteEvent(event || 'message').catch(() => {})
+  // THE CALENDAR LINK (lib/garden/calendar-link): a booking or a calendar change on a linked Botanica unit is
+  // carried to its Cloudbeds room at once. Not a message event, so it ends here.
+  if (/^(reservation\.(new|updated|created|canceled|cancelled)|reservation\.(created|updated)\.v2|listing\.calendar\.updated|calendar\.updated\.v2)$/i.test(event)) {
+    const lid = String(body?.reservation?.listingId || body?.reservation?.listing?._id || body?.listingId || body?.listing?._id || body?.calendar?.[0]?.listingId || '')
+    try { const { onGuestyEvent } = await import('@/lib/garden/calendar-link'); const room = await onGuestyEvent(lid); return NextResponse.json({ ok: true, link: room || 'not a linked room' }) }
+    catch (e: any) { return NextResponse.json({ ok: true, link: 'failed', error: String(e?.message || e).slice(0, 160) }) }
+  }
   try {
     const convId = await conversationFor(body)
     if (!convId) return NextResponse.json({ ok: true, skipped: 'no conversation' })
