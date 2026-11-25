@@ -6,6 +6,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { waitUntil } from '@vercel/functions'
 import { hookState, onEvent, subscribe } from '@/lib/garden/realtime'
 import { requireGarden } from '@/lib/garden/access'
+import { safeEqual } from '@/lib/signing'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 120
@@ -13,10 +14,13 @@ export const maxDuration = 120
 export async function POST(req: NextRequest) {
   const h = await hookState()
   const token = req.headers.get('x-garden-token') || req.nextUrl.searchParams.get('token') || ''
-  if (token !== h.token) return NextResponse.json({ error: 'bad token' }, { status: 401 })
+  if (!h.token || !safeEqual(token, String(h.token))) return NextResponse.json({ error: 'bad token' }, { status: 401 })
+  // The message is only ever a hint about WHICH NIGHTS to look at first; both systems are read again before anything is written.
+  const body: any = await req.json().catch(() => ({}))
+  const hint = { from: String(body?.startDate || body?.checkIn || body?.checkInDate || '').slice(0, 10), to: String(body?.endDate || body?.checkOut || body?.checkOutDate || '').slice(0, 10) }
   waitUntil(onEvent().catch(() => {}))
   // The calendar link: a booking or a block changed in Cloudbeds, so linked rooms are checked against Guesty at once.
-  waitUntil(import('@/lib/garden/calendar-link').then(m => m.onCloudbedsEvent()).catch(() => {}))
+  waitUntil(import('@/lib/garden/calendar-link').then(m => m.onCloudbedsEvent(hint)).catch(() => {}))
   return NextResponse.json({ ok: true })
 }
 
