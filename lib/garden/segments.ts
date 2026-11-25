@@ -19,6 +19,7 @@ import 'server-only'
 import { supabaseAdmin } from '../supabase-admin'
 import { pageRows } from '../db-page'
 import { botanicaListings } from './guesty-bridge'
+import { hotelKeptRooms } from './botanica-active'
 
 export type Segment = 'garden' | 'botanica'
 export type Scope = 'all' | Segment
@@ -69,12 +70,15 @@ export const SEGMENT_LABEL: Record<Scope, string> = { all: 'Whole property', gar
 /** Every physical room with its segment. */
 export async function segmentRooms(): Promise<{ rooms: SegRoom[]; botanica: Set<string>; listingRoom: Record<string, string> }> {
   const db = supabaseAdmin()
-  const [{ data }, units] = await Promise.all([
+  const [{ data }, units, kept] = await Promise.all([
     db.from('garden_rooms').select('id,name,room_type,blocked,status,rt:raw->>roomTypeName').or('raw->>isVirtual.is.null,raw->>isVirtual.eq.false').order('name'),
     botanicaListings().catch(() => []),
+    hotelKeptRooms(),
   ])
   const botanica = new Set<string>(), listingRoom: Record<string, string> = {}
-  for (const u of units) { const n = roomNumber(u.name); if (n) { botanica.add(n); listingRoom[u.id] = n } }
+  // A unit Guesty lists that the hotel keeps and sells itself (lib/garden/botanica-active) is a Garden ROOM: occupancy
+  // does not divide Botanica by it. Any Guesty stay it ever had is still a Botanica stay.
+  for (const u of units) { const n = roomNumber(u.name); if (n) { if (!kept.has(n)) botanica.add(n); listingRoom[u.id] = n } }
   const rooms = ((data || []) as any[]).map(r => ({ id: s(r.id), name: s(r.name), type: s(r.rt || r.room_type) || 'Room', segment: (botanica.has(s(r.name)) ? 'botanica' : 'garden') as Segment, blocked: !!r.blocked || (r.status && r.status !== 'active'), wing: wingOf(r.name) }))
   // A Botanica unit Guesty has that Cloudbeds does not list is still a room of the property.
   const have = new Set(rooms.map(r => r.name))

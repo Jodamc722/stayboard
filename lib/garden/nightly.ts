@@ -20,11 +20,12 @@ const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 const todayET = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())
 const D = /^\d{4}-\d{2}-\d{2}$/
 
-// BOTANICA'S UNITS LIVE, the same phases the Botanica report (app/api/public/botanica-report) divides by, so occupancy
-// here and there is one number: 32 from May 4, 50 from June 17 2026. Guesty lists 53 Botanica units, but three have
-// sold almost nothing (2203 and 2207 never, 2107 once). When a phase is added there, add it here.
-const BOTANICA_PHASES: [string, number][] = [['2026-05-04', 32], ['2026-06-17', 50]]
-const botanicaUnits = (date: string) => { let u = 0; for (const [from, n] of BOTANICA_PHASES) if (date >= from) u = n; return u }
+// BOTANICA'S UNITS LIVE, as the Botanica report (app/api/public/botanica-report) divides: 32 from May 4 2026, and from
+// June 17 the units that are Botanica's today — Guesty's Botanica listings less the ones the hotel keeps and sells
+// itself (lib/garden/botanica-active). Both reports use the same count, so occupancy is one number.
+const BOTANICA_OPENING: [string, number][] = [['2026-05-04', 32]]
+const BOTANICA_FULL_FROM = '2026-06-17'
+const botanicaUnits = (date: string, now: number) => { if (date >= BOTANICA_FULL_FROM) return now; let u = 0; for (const [from, n] of BOTANICA_OPENING) if (date >= from) u = n; return u }
 
 export async function gardenNightly(opts: { from?: string; to?: string } = {}) {
   const db = supabaseAdmin()
@@ -37,9 +38,9 @@ export async function gardenNightly(opts: { from?: string; to?: string } = {}) {
   const days: Record<string, NightlyDay[]> = {}, rooms: Record<string, number> = {}
   for (const scope of ['all', 'garden', 'botanica'] as Scope[]) {
     const N = narrow(all, scope, null, channelName)
-    rooms[scope] = scope === 'botanica' ? botanicaUnits(today) : N.rooms.length
+    rooms[scope] = N.rooms.length
     const by: Record<string, NightlyDay> = {}
-    for (let t = lo; t < hi; t += DAY) { const d = iso(t); by[d] = { date: d, dow: DOW[new Date(t).getUTCDay()], inv: scope === 'botanica' ? botanicaUnits(d) : N.rooms.length, rns: 0, rev: 0, cleaning: 0, arr: 0, arrNights: 0, arrLead: 0, arrLeadCnt: 0 } }
+    for (let t = lo; t < hi; t += DAY) { const d = iso(t); by[d] = { date: d, dow: DOW[new Date(t).getUTCDay()], inv: scope === 'botanica' ? botanicaUnits(d, N.rooms.length) : N.rooms.length, rns: 0, rev: 0, cleaning: 0, arr: 0, arrNights: 0, arrLead: 0, arrLeadCnt: 0 } }
     for (const x of N.stays) {
       if (x.status === 'canceled' || x.status === 'no_show') continue
       const perNight = x.total / x.nights, cleanNight = x.fees / x.nights
