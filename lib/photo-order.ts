@@ -171,7 +171,9 @@ const CATEGORY_RANK: Record<string, number> = { living: 20, dining: 30, kitchen:
 const AMENITY_RANK: { re: RegExp; rank: number; label: string }[] = [
   { re: /pool|infinity|beach|marina/, rank: 90, label: 'Pool' },
   { re: /rooftop|roof|deck|sky/, rank: 91, label: 'Rooftop' },
-  { re: /gym|fitness|spa|sauna|wellness/, rank: 92, label: 'Gym & spa' },
+  // "spa" as a word: a bare /spa/ also matched "workspace", which filed every desk photo under the
+  // building's gym (found in the 2026-11-25 audit).
+  { re: /gym|fitness|(?<![a-z])spa(?![a-z])|sauna|wellness/, rank: 92, label: 'Gym & spa' },
   { re: /lounge|club|coworking|game|cinema|theater|theatre/, rank: 93, label: 'Lounges' },
   { re: /lobby|entrance|reception|elevator|hallway|corridor/, rank: 94, label: 'Lobby' },
   { re: /park|garage|bike/, rank: 95, label: 'Parking' },
@@ -225,7 +227,7 @@ export function sceneOf(p: { room: string; category: string }): string {
   const r = rk(p.room)
   if (/pool|marina|beach/.test(r)) return 'pool'
   if (/roof|sky-?deck|sundeck/.test(r)) return 'rooftop'
-  if (/gym|fitness|spa|sauna/.test(r)) return 'gym'
+  if (/gym|fitness|(?<![a-z])spa(?![a-z])|sauna/.test(r)) return 'gym'
   if (/lobby|reception|elevator|corridor/.test(r)) return 'lobby'
   if (/lounge|club|coworking|cinema|game/.test(r)) return 'lounge'
   if (/park|garage/.test(r)) return 'parking'
@@ -235,7 +237,7 @@ export function sceneOf(p: { room: string; category: string }): string {
   if (r) return r
   return p.category === 'amenity' ? 'amenity' : rk(p.category) || 'other'
 }
-const SCENE_WORDS: Record<string, string> = { pool: 'the pool', rooftop: 'the rooftop', gym: 'the gym', lobby: 'the lobby', lounge: 'a lounge', parking: 'the garage', exterior: 'the exterior', bedroom: 'a bedroom', bathroom: 'a bathroom', living: 'the living room', kitchen: 'the kitchen', dining: 'the dining area', balcony: 'the balcony', view: 'the view', workspace: 'the desk', entry: 'the entry', amenity: 'a building amenity' }
+const SCENE_WORDS: Record<string, string> = { pool: 'the pool', rooftop: 'the rooftop', gym: 'the gym', lobby: 'the lobby', lounge: 'a lounge', parking: 'the garage', exterior: 'the exterior', bedroom: 'a bedroom', bathroom: 'a bathroom', living: 'the living room', kitchen: 'the kitchen', dining: 'the dining area', balcony: 'the balcony', view: 'the view', workspace: 'the desk', entry: 'the entry', amenity: 'a building amenity', other: 'another space' }
 export const sceneWords = (scene: string) => SCENE_WORDS[scene] || 'the ' + scene.replace(/-/g, ' ')
 /** A scene may lead this share of a building before another unit choosing it pays. */
 export const SCENE_SHARE_FREE = 1 / 3
@@ -278,7 +280,7 @@ function walkOf(p: PhotoFacts, profile?: UnitProfile): { rank: number; label: st
   // A shared space is a building amenity whatever the model called its category — a "pool-deck"
   // tagged outdoor belongs with the pool, not in the unit's tour (audit: 10 rooftop shots landed
   // mid-tour under "Outdoor" because their category was outdoor and their room was "pool-deck").
-  const shared = /pool|rooftop|roof-?deck|gym|fitness|spa|sauna|lobby|lounge|coworking|cinema|garage|parking|exterior|facade|marina/
+  const shared = /pool|rooftop|roof-?deck|gym|fitness|(?<![a-z])spa(?![a-z])|sauna|lobby|lounge|coworking|cinema|garage|parking|exterior|facade|marina/
   if (shared.test(room)) {
     for (const a of AMENITY_RANK) if (a.re.test(room) || a.re.test(rk(p.subject))) return a
     return { rank: 93, label: 'Building amenities' }
@@ -367,6 +369,8 @@ export const SPACE_LABEL: Record<SpaceType, string> = { special: 'the view', ame
 // a bathroom earns one only when it is a feature in its own right (a soaking tub, a hero-grade shot);
 // an ordinary clean bathroom belongs in the tour, where guests go to verify it.
 const SPACE_BONUS: Record<SpaceType, number> = { special: 14, amenity: 11, bedroom: 12, living: 10, kitchen: 9, outdoor: 7, bath: -8, other: 0 }
+// A plain exterior is held back the same way: it says "a building", not "this home" (THE CLICK).
+const plainExterior = (p: PhotoFacts) => p.category === 'exterior' && !/ocean|bay|water|pool|beach|rooftop/.test(p.sellingPoints.join(' ') + ' ' + rk(p.subject))
 const featureBath = (p: PhotoFacts) => p.quality >= 80 && (p.heroWorthy || /soaking-tub|freestanding|spa-bath/.test(p.sellingPoints.join(' ')))
 /** What a photo is worth in positions 2–5 on its own — before diversity. */
 export function showcaseScore(p: PhotoFacts): number {
@@ -391,12 +395,12 @@ export function pickShowcase(pool: PhotoFacts[], taken: PhotoFacts[], seats: num
       if (used.has(p._id) || rooms.has(rk(p.room))) continue
       const t = spaceType(p, studio)
       const seen = types.get(t) || 0
-      const sc = showcaseScore(p) + (seen ? -10 * seen : t === 'bath' && featureBath(p) ? 4 : SPACE_BONUS[t]) - showcaseCrowding(p, sibs)
+      const sc = showcaseScore(p) + (seen ? -10 * seen : t === 'bath' && featureBath(p) ? 4 : SPACE_BONUS[t]) - (plainExterior(p) ? 8 : 0) - showcaseCrowding(p, sibs)
       if (sc > 0 && (!best || sc > best.score)) best = { p, score: sc, t }
     }
     if (!best) break
     used.add(best.p._id); rooms.add(rk(best.p.room)); types.set(best.t, (types.get(best.t) || 0) + 1)
-    out.push({ p: best.p, score: best.score, why: `best photo for ${SPACE_LABEL[best.t]} — ${best.p.subject || best.p.category}${best.p.shotType === 'wide' ? ', wide' : ''} · quality ${best.p.quality}` })
+    out.push({ p: best.p, score: best.score, why: `best photo for ${best.t === 'other' ? (best.p.category === 'exterior' ? 'the building' : sceneWords(sceneOf(best.p))) : SPACE_LABEL[best.t]} — ${best.p.subject || best.p.category}${best.p.shotType === 'wide' ? ', wide' : ''} · quality ${best.p.quality}` })
   }
   // THE FIRST SWIPE DIFFERS TOO. When most sister units put the same scene second, the best of this
   // unit's other picks takes the second seat, as long as it is about as strong (within 10 points).

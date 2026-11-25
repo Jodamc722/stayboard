@@ -221,7 +221,7 @@ export async function POST(req: NextRequest) {
   const siblings = sis.openings
   // What the sister units open with now, in words, for the analyst.
   const coverTally: Record<string, number> = {}
-  for (const o of siblings) { const sc = o.five[0]?.scene; if (sc) coverTally[sc] = (coverTally[sc] || 0) + 1 }
+  for (const o of siblings) { const sc = o.five[0]?.scene; if (sc && sc !== 'other') coverTally[sc] = (coverTally[sc] || 0) + 1 }
   const coverSpread = Object.keys(coverTally).sort((a, b) => coverTally[b] - coverTally[a]).map(k => ({ scene: k, label: sceneWords(k), n: coverTally[k] }))
   const buildingLine = siblings.length ? `\nBUILDING: ${sis.building} has ${siblings.length} other listing${siblings.length === 1 ? '' : 's'} of ours, each sold on its own.${coverSpread.length ? ' Their covers now: ' + coverSpread.slice(0, 5).map(c => `${c.label} ×${c.n}`).join(', ') + '.' : ''} This listing must not open like them: score "distinct" carefully, and treat a strong photo of THIS unit's own room or view as cover-worthy ahead of a shared space the sister units already lead with.` : ''
   const presetMenu = [AUTO_PRESET, ...cfg.enhance.presets.filter(p => p.key !== 'auto'), { key: 'none', name: 'None', when: 'Already good — leave it exactly as shot.' }].map(p => `  "${p.key}" (${p.name}) — ${p.when}`).join('\n')
