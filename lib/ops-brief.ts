@@ -75,9 +75,14 @@ async function managementNames(): Promise<string[]> {
   return out
 }
 
-export async function gather(variant: BriefVariant) {
+/**
+ * `day` (YYYY-MM-DD) builds the same read for another day: the day sheet, the tasks scheduled, the
+ * arrivals and the week ahead are that day's (Jon, 2026-11-25: "we should be able to look at tomorrow's
+ * brief"). What is only ever "now" stays now: new reviews, yesterday's numbers, the reputation watch.
+ */
+export async function gather(variant: BriefVariant, day?: string) {
   const db = supabaseAdmin()
-  const today = ymdET(new Date())
+  const today = day && /^\d{4}-\d{2}-\d{2}$/.test(day) ? day : ymdET(new Date())
   const presets = await getOpsPresets()
   // The taxonomy is editable (Users & admin -> Task categories); the brief reads the same saved
   // rules the board does, so the email and the screen can never disagree about what a task is.
@@ -95,7 +100,7 @@ export async function gather(variant: BriefVariant) {
     BIG_USD = R.bigBookingUsd || 3000
     LOOK_D = Math.min(14, Math.max(3, Number(R.notableLookaheadDays) || 7))
   } catch { /* defaults stand */ }
-  const inN = ymdET(new Date(Date.now() + LOOK_D * 86400000))
+  const inN = ymdET(new Date(Date.parse(today + 'T12:00:00Z') + LOOK_D * 86400000))
 
   // The daysheet does the heavy lifting — same engine as the boards.
   const sheetMarket = (variant === 'full' || variant === 'GM') ? 'all' : variant

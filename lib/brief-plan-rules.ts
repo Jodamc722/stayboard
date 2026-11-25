@@ -30,7 +30,7 @@ export type PlanRow = { id: string; title: string; meta?: string; note?: string;
 export type PlanGroup = { name: string; meta?: string; rows: PlanRow[]; also?: PlanRow[]; more?: string }
 export type PlanSection = { key: string; title: string; tone?: Tone; rows?: PlanRow[]; groups?: PlanGroup[]; empty?: string; more?: string }
 export type PlanTile = { label: string; value: string; tone?: Tone; note?: string }
-export type Plan = { key: PlanKey; name: string; forWhom: string; day: string; dayLabel: string; tiles: PlanTile[]; sections: PlanSection[]; note?: string; noteBy?: string; builtAt: string; board?: { label: string; href: string } }
+export type Plan = { key: PlanKey; name: string; forWhom: string; day: string; dayLabel: string; /** days from today: 0 today, 1 tomorrow … */ ahead?: number; tiles: PlanTile[]; sections: PlanSection[]; note?: string; noteBy?: string; builtAt: string; board?: { label: string; href: string } }
 
 // ── What a person changed before it went out ────────────────────────────────────────────────────
 export type PlanExtra = { id: string; text: string; by: string }
@@ -59,18 +59,63 @@ export function applyEdits(plan: Plan, edits: PlanEdits | null, forSend = false)
   const e = edits && edits.day === plan.day ? edits : emptyEdits(plan.day)
   const hidden = new Set(e.hidden)
   const mark = (r: PlanRow): PlanRow => (hidden.has(r.id) ? { ...r, hidden: true } : r)
-  const keep = (rows: PlanRow[]) => (forSend ? rows.map(mark).filter(r => !r.hidden) : rows.map(mark))
   let sections: PlanSection[] = plan.sections.map(s => ({
     ...s,
-    ...(s.rows ? { rows: keep(s.rows) } : {}),
-    ...(s.groups ? { groups: s.groups.map(g => ({ ...g, rows: keep(g.rows), ...(g.also ? { also: keep(g.also) } : {}) })).filter(g => !forSend || g.rows.length || (g.also || []).length) } : {}),
+    ...(s.rows ? { rows: s.rows.map(mark) } : {}),
+    ...(s.groups ? { groups: s.groups.map(g => ({ ...g, rows: g.rows.map(mark), ...(g.also ? { also: g.also.map(mark) } : {}) })) } : {}),
   }))
-  if (forSend) sections = sections.filter(s => rowsOf(s).length || s.empty)
   if (e.extra.length) {
-    const also: PlanSection = { key: ALSO, title: 'Also today', rows: e.extra.map(x => ({ id: x.id, title: x.text, custom: true, by: x.by, tone: 'amber' as Tone })) }
+    const also: PlanSection = { key: ALSO, title: 'Also ' + dayWord(plan.ahead), rows: e.extra.map(x => ({ id: x.id, title: x.text, custom: true, by: x.by, tone: 'amber' as Tone })) }
     sections = [also, ...sections]
   }
-  return { ...plan, sections, note: e.note || undefined, noteBy: e.note ? e.noteBy || undefined : undefined }
+  const page: Plan = { ...plan, sections, note: e.note || undefined, noteBy: e.note ? e.noteBy || undefined : undefined }
+  return forSend ? asSent(page) : page
+}
+/**
+ * The plan as it is sent, from the plan as the page shows it: every row marked "left out" is gone, and
+ * so is a person or a section left with nothing. The page's Preview draws the email from this, so what
+ * is previewed is what is sent (Jon, 2026-11-25: "have a preview button so we can see").
+ */
+export function asSent(page: Plan): Plan {
+  const keep = (rows: PlanRow[]) => rows.filter(r => !r.hidden)
+  const sections = page.sections.map(s => ({
+    ...s,
+    ...(s.rows ? { rows: keep(s.rows) } : {}),
+    ...(s.groups ? { groups: s.groups.map(g => ({ ...g, rows: keep(g.rows), ...(g.also ? { also: keep(g.also) } : {}) })).filter(g => g.rows.length || (g.also || []).length) } : {}),
+  })).filter(s => rowsOf(s).length || s.empty)
+  return { ...page, sections }
+}
+
+// ── The day ─────────────────────────────────────────────────────────────────────────────────────
+// Jon, 2026-11-25: "can we add a calendar selection to briefs, briefs are designed for the morning. We
+// should be able to look at tomorrow's brief." A plan can be built for today or any of the next seven
+// days. Notes, added lines and rows left out are kept per day, so tomorrow's can be written tonight and
+// are on the plan when it sends itself in the morning.
+export const DAYS_AHEAD = 7
+const DAY_RE = /^\d{4}-\d{2}-\d{2}$/
+export function addDays(day: string, n: number): string {
+  const t = Date.parse(day + 'T12:00:00Z')
+  return Number.isFinite(t) ? new Date(t + n * 86400000).toISOString().slice(0, 10) : day
+}
+export function daysBetween(from: string, to: string): number {
+  return Math.round((Date.parse(to + 'T12:00:00Z') - Date.parse(from + 'T12:00:00Z')) / 86400000)
+}
+/** The day asked for when it is today or one of the next seven; otherwise today. */
+export function cleanDay(v: unknown, today: string): string {
+  const d = String(v || '')
+  if (!DAY_RE.test(d) || !Number.isFinite(Date.parse(d + 'T12:00:00Z'))) return today
+  const n = daysBetween(today, d)
+  return n >= 0 && n <= DAYS_AHEAD ? d : today
+}
+/** "today", "tomorrow", or "that day" for anything further out (the date is in the plan's heading). */
+export const dayWord = (ahead?: number) => (!ahead ? 'today' : ahead === 1 ? 'tomorrow' : 'that day')
+/** Where a day's edits are kept. */
+export const editsKey = (key: PlanKey, day: string) => `${key}@${day}`
+/** Edits for days already gone are dropped when anything is saved. */
+export function pruneEdits(all: Record<string, unknown>, today: string): Record<string, unknown> {
+  const out: Record<string, unknown> = {}
+  for (const k of Object.keys(all)) { const d = String((all[k] as any)?.day || ''); if (DAY_RE.test(d) && d >= today) out[k] = all[k] }
+  return out
 }
 
 // ── Who gets it, and whether it goes out on its own ─────────────────────────────────────────────

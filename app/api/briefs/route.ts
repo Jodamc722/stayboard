@@ -1,5 +1,7 @@
 // THE BRIEFS PAGE (lib/brief-plans; Jon, 2026-11-25). Gated by the `briefs` key: view reads, edit changes and sends.
-//   GET  ?plan=broward|miami|north|care → the plan as it stands now with today's edits marked on it, the edits, the settings
+//   GET  ?plan=ops|broward|miami|north|care[&day=YYYY-MM-DD] → the plan for that day (today, or one of the next seven) with
+//        that day's edits marked on it, the edits, the settings
+//   Every POST may carry `day` too: the note, the added lines, the rows left out and a send are that day's.
 //   POST { plan, op, … } (edit):
 //     note { text } · add { text } · remove { id } · hide { id } · show { id }   → today's edits for that plan
 //     to { emails } · auto { on }                                               → who gets it, and whether it sends itself at 7
@@ -8,7 +10,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireLevel } from '@/lib/access'
 import { buildPlan, readEdits, saveEdits, readPlanSettings, savePlanSettings, sendPlan } from '@/lib/brief-plans'
-import { applyEdits, isPlanKey, parseEmails, type PlanKey } from '@/lib/brief-plan-rules'
+import { applyEdits, cleanDay, isPlanKey, parseEmails, type PlanKey } from '@/lib/brief-plan-rules'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 120
@@ -21,9 +23,9 @@ export async function GET(req: NextRequest) {
   const key = req.nextUrl.searchParams.get('plan')
   if (!isPlanKey(key)) return NextResponse.json({ ok: false, error: 'Unknown plan.' }, { status: 400 })
   try {
-    const [raw, settings] = await Promise.all([buildPlan(key), readPlanSettings()])
+    const [raw, settings] = await Promise.all([buildPlan(key, cleanDay(req.nextUrl.searchParams.get('day'), today())), readPlanSettings()])
     const edits = await readEdits(key, raw.day)
-    return NextResponse.json({ ok: true, plan: applyEdits(raw, edits, false), edits, settings: settings[key], me: String((g as any).access?.email || '') })
+    return NextResponse.json({ ok: true, plan: applyEdits(raw, edits, false), edits, settings: settings[key], me: String((g as any).access?.email || ''), today: today() })
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 300) }, { status: 500 })
   }
@@ -38,6 +40,7 @@ export async function POST(req: NextRequest) {
     const b: any = await req.json().catch(() => ({}))
     if (!isPlanKey(b.plan)) return NextResponse.json({ ok: false, error: 'Unknown plan.' }, { status: 400 })
     const key: PlanKey = b.plan, op = String(b.op || '')
+    const day = cleanDay(b.day, today())
     if (op === 'to' || op === 'auto') {
       const s = await readPlanSettings()
       if (op === 'to') s[key] = { ...s[key], to: parseEmails(b.emails) }
@@ -46,9 +49,9 @@ export async function POST(req: NextRequest) {
       const r = await savePlanSettings(s, who)
       return NextResponse.json(r.ok ? { ok: true, settings: s[key] } : r, { status: r.ok ? 200 : 500 })
     }
-    if (op === 'test') { if (!/@/.test(who)) return NextResponse.json({ ok: false, error: 'Sign in first.' }, { status: 401 }); return NextResponse.json(await sendPlan(key, [who], who, { test: true })) }
-    if (op === 'send') { const s = await readPlanSettings(); const r = await sendPlan(key, s[key].to, who, { record: true }); return NextResponse.json(r, { status: r.ok ? 200 : 400 }) }
-    const day = today()
+    if (op === 'test') { if (!/@/.test(who)) return NextResponse.json({ ok: false, error: 'Sign in first.' }, { status: 401 }); return NextResponse.json(await sendPlan(key, [who], who, { test: true, day })) }
+    if (op === 'send') { const s = await readPlanSettings(); // Only today's plan counts as "sent today": sending tomorrow's tonight is a heads-up, and the morning one still goes.
+      const r = await sendPlan(key, s[key].to, who, { record: day === today(), day }); return NextResponse.json(r, { status: r.ok ? 200 : 400 }) }
     const e = await readEdits(key, day)
     const id = String(b.id || '')
     if (op === 'note') { e.note = String(b.text || '').slice(0, 1200).trim(); e.noteBy = e.note ? nameOf(access) : '' }

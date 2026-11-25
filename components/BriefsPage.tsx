@@ -5,13 +5,20 @@
 // One plan at a time. What is on this page is what the email says: the same plan, drawn wide here and
 // narrow there (lib/brief-plan-rules). A note sits at the top of the email. A line added here leads the
 // plan under "Also today". A row taken out stays here, greyed, so it can be put back; it is left out of
-// what is sent. Changes are for today only.
+// what is sent. Changes are for that day only.
+//
+// THE DAY (Jon, 2026-11-25: "can we add a calendar selection to briefs, briefs are designed for the
+// morning. We should be able to look at tomorrow's brief"): Today, Tomorrow, or any of the next seven
+// days from the calendar. A note written on tomorrow's plan tonight is on it when it sends in the morning.
+// PREVIEW ("have a preview button so we can see"): the email exactly as it would be sent, drawn from the
+// plan on the page with the rows left out removed.
 import { useCallback, useEffect, useState } from 'react'
-import { Loader2, Mail, RefreshCw, Send, X, Undo2, Plus } from 'lucide-react'
+import { Loader2, Mail, RefreshCw, Send, X, Undo2, Plus, Eye, CalendarDays } from 'lucide-react'
 import { LeanHead, LeanTabs, Tag, Pill } from '@/components/lean'
-import { PLAN_KEYS, PLAN_NAMES, sectionCount, type Plan, type PlanKey, type PlanRow, type PlanSection, type PlanSetting, type PlanTag } from '@/lib/brief-plan-rules'
+import { PLAN_KEYS, PLAN_NAMES, DAYS_AHEAD, sectionCount, addDays, daysBetween, dayWord, asSent, planEmailHtml, planSubject, type Plan, type PlanKey, type PlanRow, type PlanSection, type PlanSetting, type PlanTag } from '@/lib/brief-plan-rules'
 
-type Res = { ok: boolean; error?: string; plan?: Plan; settings?: PlanSetting; me?: string }
+type Res = { ok: boolean; error?: string; plan?: Plan; settings?: PlanSetting; me?: string; today?: string }
+const etToday = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date())
 const btn = 'h-8 px-3 rounded-lg border border-line bg-white text-[12.5px] font-semibold text-ink inline-flex items-center gap-1.5 hover:bg-app disabled:opacity-50'
 const primary = 'h-8 px-3 rounded-lg bg-ink text-white text-[12.5px] font-semibold inline-flex items-center gap-1.5 hover:opacity-90 disabled:opacity-50'
 const TAG: Record<string, any> = { red: 'rose', amber: 'amber', green: 'emerald', gold: 'amber', grey: 'slate', none: 'slate' }
@@ -27,23 +34,28 @@ export function BriefsPage() {
   const [note, setNote] = useState('')
   const [line, setLine] = useState('')
   const [to, setTo] = useState('')
+  const [today] = useState(etToday)
+  const [day, setDay] = useState(today)
+  const [preview, setPreview] = useState(false)
 
-  const load = useCallback(async (k: PlanKey, quiet = false) => {
+  const load = useCallback(async (k: PlanKey, d: string, quiet = false) => {
     if (!quiet) { setLoading(true); setData(null) }
-    const r: Res = await fetch('/api/briefs?plan=' + k, { cache: 'no-store' }).then(x => x.json()).catch(() => ({ ok: false, error: 'The plan did not load. Try again.' }))
+    const r: Res = await fetch('/api/briefs?plan=' + k + '&day=' + d, { cache: 'no-store' }).then(x => x.json()).catch(() => ({ ok: false, error: 'The plan did not load. Try again.' }))
     setData(r); setLoading(false)
     if (r.ok) { setNote(r.plan?.note || ''); setTo((r.settings?.to || []).join(', ')) }
   }, [])
-  useEffect(() => { try { const h = window.location.hash.slice(1); if ((PLAN_KEYS as string[]).indexOf(h) >= 0) { setKey(h as PlanKey); load(h as PlanKey); return } } catch { /* no hash */ } load(PLAN_KEYS[0]) }, [load])
-  const pick = (k: PlanKey) => { setKey(k); setMsg(''); setLine(''); try { window.location.hash = k } catch { /* fine */ } load(k) }
+  useEffect(() => { try { const h = window.location.hash.slice(1); if ((PLAN_KEYS as string[]).indexOf(h) >= 0) { setKey(h as PlanKey); load(h as PlanKey, today); return } } catch { /* no hash */ } load(PLAN_KEYS[0], today) }, [load, today])
+  const pick = (k: PlanKey) => { setKey(k); setMsg(''); setLine(''); try { window.location.hash = k } catch { /* fine */ } load(k, day) }
+  const pickDay = (d: string) => { const n = daysBetween(today, d); const ok = n >= 0 && n <= DAYS_AHEAD ? d : today; setDay(ok); setMsg(''); setLine(''); load(key, ok) }
+  const ahead = Math.max(0, daysBetween(today, day)), W = dayWord(ahead)
 
   const post = async (op: string, body: Record<string, unknown> = {}, done = '') => {
     setBusy(op + String(body.id || '')); setMsg('')
-    const r = await fetch('/api/briefs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ plan: key, op, ...body }) }).then(x => x.json()).catch(() => ({ ok: false, error: 'That did not save. Try again.' }))
+    const r = await fetch('/api/briefs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ plan: key, op, day, ...body }) }).then(x => x.json()).catch(() => ({ ok: false, error: 'That did not save. Try again.' }))
     setBusy('')
     if (!r.ok) { setMsg(r.error || 'That did not work.'); return false }
     if (done) setMsg(done.replace('{n}', String(r.n ?? '')))
-    await load(key, true)
+    await load(key, day, true)
     return true
   }
 
@@ -52,15 +64,28 @@ export function BriefsPage() {
   return (
     <div>
       <LeanHead title="Briefs" sub="The morning plan for each team. What you see is what is sent; change it here before it goes out.">
-        <button className={btn} onClick={() => load(key)} disabled={loading} title="Build this plan again from the day as it stands now">{loading ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />} Refresh</button>
+        <button className={btn} onClick={() => load(key, day)} disabled={loading} title="Build this plan again from the day as it stands now">{loading ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />} Refresh</button>
       </LeanHead>
-      <LeanTabs tabs={PLAN_KEYS.map(k => ({ key: k, label: PLAN_NAMES[k] }))} value={key} onChange={pick} />
+      <LeanTabs tabs={PLAN_KEYS.map(k => ({ key: k, label: PLAN_NAMES[k] }))} value={key} onChange={pick}
+        right={
+          <span className="inline-flex items-center gap-1.5">
+            <span className="inline-flex rounded-xl border border-line overflow-hidden text-[12.5px]">
+              <button onClick={() => pickDay(today)} aria-pressed={ahead === 0} className={`px-2.5 py-1.5 font-semibold ${ahead === 0 ? 'bg-ink text-white' : 'bg-white text-muted hover:text-ink'}`}>Today</button>
+              <button onClick={() => pickDay(addDays(today, 1))} aria-pressed={ahead === 1} className={`px-2.5 py-1.5 font-semibold border-l border-line ${ahead === 1 ? 'bg-ink text-white' : 'bg-white text-muted hover:text-ink'}`}>Tomorrow</button>
+            </span>
+            <label className={`inline-flex items-center gap-1.5 h-[34px] rounded-xl border px-2 text-[12.5px] font-semibold ${ahead > 1 ? 'border-ink text-ink' : 'border-line text-muted'}`} title="Pick any day in the next week">
+              <CalendarDays size={14} />
+              <input type="date" value={day} min={today} max={addDays(today, DAYS_AHEAD)} onChange={e => e.target.value && pickDay(e.target.value)} className="bg-transparent text-[12.5px] font-semibold text-ink focus:outline-none" aria-label="Day of the plan" />
+            </label>
+          </span>
+        } />
 
       {loading && <p className="mt-6 text-[13px] text-muted flex items-center gap-2"><Loader2 size={14} className="animate-spin" /> Building the {PLAN_NAMES[key]} plan…</p>}
       {!loading && data && !data.ok && <p className="mt-6 text-[13px] text-rose-700">{data.error}</p>}
 
       {plan && s && (
         <div className="mt-4 space-y-4">
+          {ahead > 0 && <p className="text-[12.5px] text-amber-900 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">This is the plan for <b>{plan.dayLabel}</b> as it stands now. Cleans, who holds them and arrivals can still change before the morning. A note or change made here is on it when it sends that morning.</p>}
           {/* THE DAY IN NUMBERS */}
           <div className="grid grid-cols-3 lg:grid-cols-6 gap-2">
             {plan.tiles.map(t => (
@@ -75,8 +100,8 @@ export function BriefsPage() {
           {/* BEFORE IT GOES OUT: the note, a line of your own, who gets it */}
           <div className="rounded-xl border border-line bg-white p-3 grid gap-3 lg:grid-cols-2">
             <div>
-              <div className="text-[11px] font-bold uppercase tracking-wider text-muted mb-1">Note at the top · today only</div>
-              <textarea value={note} onChange={e => setNote(e.target.value)} rows={3} maxLength={1200} placeholder={`Anything the ${PLAN_NAMES[key]} team should read first today`} className="w-full rounded-lg border border-line px-2.5 py-2 text-[13px] leading-snug focus:outline-none focus:border-ink" />
+              <div className="text-[11px] font-bold uppercase tracking-wider text-muted mb-1">Note at the top · {ahead ? plan.dayLabel : 'today'} only</div>
+              <textarea value={note} onChange={e => setNote(e.target.value)} rows={3} maxLength={1200} placeholder={`Anything the ${PLAN_NAMES[key]} team should read first ${W}`} className="w-full rounded-lg border border-line px-2.5 py-2 text-[13px] leading-snug focus:outline-none focus:border-ink" />
               <div className="mt-1.5 flex items-center gap-2 flex-wrap">
                 <button className={btn} disabled={!!busy || note.trim() === (plan.note || '')} onClick={() => post('note', { text: note }, note.trim() ? 'Note saved.' : 'Note removed.')}>{busy === 'note' ? <Loader2 size={13} className="animate-spin" /> : null} Save note</button>
                 {plan.note ? <span className="text-[11.5px] text-muted">On the plan{plan.noteBy ? ', from ' + plan.noteBy : ''}</span> : null}
@@ -94,8 +119,9 @@ export function BriefsPage() {
                 <span className="text-[11.5px] text-muted">{s.to.length} on the list</span>
               </div>
               <div className="mt-3 flex items-center gap-2 flex-wrap">
+                <button className={btn} disabled={!!busy} onClick={() => setPreview(true)} title="See the email exactly as it would be sent"><Eye size={13} /> Preview</button>
                 <button className={btn} disabled={!!busy} onClick={() => post('test', {}, 'Sent to you only. Check your inbox.')} title="Emails this plan, as it stands, to you and nobody else">{busy === 'test' ? <Loader2 size={13} className="animate-spin" /> : <Mail size={13} />} Email it to me</button>
-                <button className={primary} disabled={!!busy || !s.to.length} onClick={() => post('send', {}, 'Sent to {n}.')} title={s.to.length ? 'Emails this plan now to the ' + s.to.length + ' on the list' : 'Add who gets it first'}>{busy === 'send' ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />} Send now{s.to.length ? ' to ' + s.to.length : ''}</button>
+                <button className={primary} disabled={!!busy || !s.to.length} onClick={() => post('send', {}, 'Sent to {n}.')} title={s.to.length ? (ahead ? `Emails ${plan.dayLabel}'s plan now to the ${s.to.length} on the list, as a heads-up. The morning one still sends.` : 'Emails this plan now to the ' + s.to.length + ' on the list') : 'Add who gets it first'}>{busy === 'send' ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />} Send now{s.to.length ? ' to ' + s.to.length : ''}</button>
                 <span className="inline-flex rounded-lg border border-line overflow-hidden" title="On: this plan emails itself to the list every morning at about 7, with the note and changes made here">
                   <button className={`h-8 px-2.5 text-[12px] font-semibold ${!s.auto ? 'bg-ink text-white' : 'bg-white text-muted'}`} disabled={!!busy} onClick={() => s.auto && post('auto', { on: false }, 'It will not send on its own.')}>Off</button>
                   <button className={`h-8 px-2.5 text-[12px] font-semibold ${s.auto ? 'bg-emerald-600 text-white' : 'bg-white text-muted'}`} disabled={!!busy} onClick={() => !s.auto && post('auto', { on: true }, 'It will send every morning at about 7.')}>Sends at 7</button>
@@ -116,6 +142,27 @@ export function BriefsPage() {
           </div>
         </div>
       )}
+      {preview && plan && <PreviewSheet plan={plan} to={s?.to || []} onClose={() => setPreview(false)} />}
+    </div>
+  )
+}
+
+/** The email as it would be sent: the plan on the page with the rows left out removed, in the email's own layout. */
+function PreviewSheet({ plan, to, onClose }: { plan: Plan; to: string[]; onClose: () => void }) {
+  const out = asSent(plan)
+  return (
+    <div className="fixed inset-0 z-50 bg-black/40 flex items-start justify-center p-2 sm:p-6" onClick={onClose}>
+      <div className="w-full max-w-[700px] h-full max-h-[92vh] bg-white rounded-2xl overflow-hidden flex flex-col shadow-xl" onClick={e => e.stopPropagation()}>
+        <div className="flex items-start gap-2 px-4 py-3 border-b border-line">
+          <div className="min-w-0 flex-1">
+            <div className="text-[11px] font-bold uppercase tracking-wider text-muted">Preview · the email as it would be sent</div>
+            <div className="text-[13.5px] font-semibold text-ink truncate">{planSubject(out)}</div>
+            <div className="text-[11.5px] text-muted truncate">{to.length ? 'To ' + to.join(', ') : 'Nobody on the list yet'}</div>
+          </div>
+          <button className="shrink-0 h-8 w-8 grid place-items-center rounded-lg text-muted hover:bg-app hover:text-ink" onClick={onClose} title="Close"><X size={16} /></button>
+        </div>
+        <iframe title="Email preview" sandbox="" srcDoc={planEmailHtml(out)} className="flex-1 w-full bg-[#F4F2EE]" />
+      </div>
     </div>
   )
 }
