@@ -67,6 +67,7 @@ export function BriefsPage() {
               <div key={t.label} className="rounded-xl border border-line bg-white px-3 py-2.5">
                 <div className="text-[10.5px] font-bold uppercase tracking-wider text-muted">{t.label}</div>
                 <div className={`text-[26px] leading-tight font-semibold tabular-nums ${t.tone === 'red' ? 'text-rose-700' : t.tone === 'amber' ? 'text-amber-700' : 'text-ink'}`}>{t.value}</div>
+                {t.note && <div className="text-[11px] leading-tight text-muted">{t.note}</div>}
               </div>
             ))}
           </div>
@@ -156,7 +157,14 @@ function Section({ sec, busy, onHide, onShow, onRemove }: { sec: PlanSection; bu
       {sec.groups && sec.groups.map(g => (
         <div key={g.name} className="mt-2 first:mt-0">
           <div className="text-[13.5px] font-semibold text-ink">{g.name}{g.meta ? <span className="ml-1.5 text-[12px] font-normal text-muted">{g.meta}</span> : null}</div>
-          <div className="divide-y divide-line/60">{g.rows.map((r, i) => <Row key={r.id} r={r} n={i + 1} busy={busy} onHide={onHide} onShow={onShow} onRemove={onRemove} />)}</div>
+          {g.rows.length > 0 && <div className="divide-y divide-line/60">{g.rows.map((r, i) => <Row key={r.id} r={r} n={i + 1} busy={busy} onHide={onHide} onShow={onShow} onRemove={onRemove} />)}</div>}
+          {g.also && g.also.length > 0 && (
+            <>
+              {g.rows.length > 0 && <div className="mt-1 pl-3 text-[10px] font-bold uppercase tracking-wider text-muted">Other tasks</div>}
+              <div className="divide-y divide-line/60">{g.also.map(r => <Row key={r.id} r={r} busy={busy} onHide={onHide} onShow={onShow} onRemove={onRemove} />)}</div>
+              {g.more && <div className="pl-3 text-[11.5px] text-muted">{g.more}</div>}
+            </>
+          )}
         </div>
       ))}
       {sec.rows && sec.rows.length > 0 && <div className="divide-y divide-line/60">{sec.rows.map(r => <Row key={r.id} r={r} busy={busy} onHide={onHide} onShow={onShow} onRemove={onRemove} />)}</div>}

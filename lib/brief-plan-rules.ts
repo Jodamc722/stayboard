@@ -23,9 +23,10 @@ export const isPlanKey = (v: unknown): v is PlanKey => PLAN_KEYS.indexOf(v as Pl
 export type Tone = 'red' | 'amber' | 'green' | 'none'
 export type PlanTag = { text: string; tone?: Tone | 'gold' | 'grey' }
 export type PlanRow = { id: string; title: string; meta?: string; note?: string; tags?: PlanTag[]; tone?: Tone; href?: string; hidden?: boolean; custom?: boolean; by?: string }
-export type PlanGroup = { name: string; meta?: string; rows: PlanRow[] }
+/** One person's day: `rows` is their cleans, in the order to run them; `also` is the other work on their name. */
+export type PlanGroup = { name: string; meta?: string; rows: PlanRow[]; also?: PlanRow[]; more?: string }
 export type PlanSection = { key: string; title: string; tone?: Tone; rows?: PlanRow[]; groups?: PlanGroup[]; empty?: string; more?: string }
-export type PlanTile = { label: string; value: string; tone?: Tone }
+export type PlanTile = { label: string; value: string; tone?: Tone; note?: string }
 export type Plan = { key: PlanKey; name: string; forWhom: string; day: string; dayLabel: string; tiles: PlanTile[]; sections: PlanSection[]; note?: string; noteBy?: string; builtAt: string; board?: { label: string; href: string } }
 
 // ── What a person changed before it went out ────────────────────────────────────────────────────
@@ -42,7 +43,7 @@ export function cleanEdits(v: unknown, day: string): PlanEdits {
     extra: (Array.isArray(x.extra) ? x.extra : []).map((e: any) => ({ id: String(e?.id || ''), text: String(e?.text || '').replace(/\s+/g, ' ').trim().slice(0, 300), by: String(e?.by || '').slice(0, 80) })).filter((e: PlanExtra) => e.id && e.text).slice(0, 20),
   }
 }
-const rowsOf = (s: PlanSection): PlanRow[] => [...(s.rows || []), ...(s.groups || []).flatMap(g => g.rows)]
+const rowsOf = (s: PlanSection): PlanRow[] => [...(s.rows || []), ...(s.groups || []).flatMap(g => [...g.rows, ...(g.also || [])])]
 /** How many rows a section holds (hidden ones not counted). */
 export const sectionCount = (s: PlanSection) => rowsOf(s).filter(r => !r.hidden).length
 export const ALSO = 'also'
@@ -59,7 +60,7 @@ export function applyEdits(plan: Plan, edits: PlanEdits | null, forSend = false)
   let sections: PlanSection[] = plan.sections.map(s => ({
     ...s,
     ...(s.rows ? { rows: keep(s.rows) } : {}),
-    ...(s.groups ? { groups: s.groups.map(g => ({ ...g, rows: keep(g.rows) })).filter(g => !forSend || g.rows.length) } : {}),
+    ...(s.groups ? { groups: s.groups.map(g => ({ ...g, rows: keep(g.rows), ...(g.also ? { also: keep(g.also) } : {}) })).filter(g => !forSend || g.rows.length || (g.also || []).length) } : {}),
   }))
   if (forSend) sections = sections.filter(s => rowsOf(s).length || s.empty)
   if (e.extra.length) {
@@ -82,6 +83,38 @@ export function cleanSettings(v: unknown): PlanSettings {
   const x = (v && typeof v === 'object' ? v : {}) as any
   const one = (k: PlanKey): PlanSetting => ({ to: parseEmails(x[k]?.to), auto: !!x[k]?.auto, lastSent: x[k]?.lastSent && x[k].lastSent.day ? { day: String(x[k].lastSent.day), at: String(x[k].lastSent.at || ''), by: String(x[k].lastSent.by || ''), n: Number(x[k].lastSent.n) || 0 } : null })
   return { broward: one('broward'), miami: one('miami'), north: one('north'), care: one('care') }
+}
+
+// ── Hours ───────────────────────────────────────────────────────────────────────────────────────
+// Jon, 2026-11-25: "It should also show how many hours based on cleans expected, also other task they
+// have assigned too." The hours are his labor KPI (lib/clean-rates): the expected labor cost of each
+// clean divided by what a cleaner is paid an hour. They are a guide to where the day should land, so
+// they are never coloured and never called too many. Other tasks carry no hours: nothing records how
+// long one takes, so the plan lists them and counts them, and does not guess.
+/** 7.5 → "7.5h", 8 → "8h". A day's total reads to the half hour; one clean (`step` 0.25) to the quarter: "1.75h". */
+export function hoursText(h: number, step = 0.5): string {
+  const n = Number(h) || 0
+  if (n <= 0) return '0h'
+  const r = Math.max(step, Math.round(n / step) * step)
+  return String(Math.round(r * 100) / 100) + 'h'
+}
+const count = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`
+/** The line beside a person's name: cleans, the hours they are expected to take, other tasks, then what is hot or done. */
+export function personMeta(p: { cleans: number; hours: number; tasks: number; sameDay?: number; done?: number }): string {
+  return [
+    p.cleans ? count(p.cleans, 'clean', 'cleans') : '',
+    p.cleans && p.hours > 0 ? 'about ' + hoursText(p.hours) : '',
+    p.tasks ? count(p.tasks, p.cleans ? 'other task' : 'task', p.cleans ? 'other tasks' : 'tasks') : '',
+    p.sameDay ? p.sameDay + ' same-day' : '',
+    p.done ? p.done + ' done' : '',
+  ].filter(Boolean).join(' · ')
+}
+/** "4 cleaners at 8h": the hours as people, a whole person at a time. */
+export function crewFor(hours: number, shiftHours: number): string {
+  const sh = shiftHours > 0 ? shiftHours : 8
+  if (!(hours > 0)) return ''
+  const n = Math.max(1, Math.ceil(hours / sh - 1e-9))
+  return `${count(n, 'cleaner', 'cleaners')} at ${hoursText(sh)}`
 }
 
 // ── The email ───────────────────────────────────────────────────────────────────────────────────
@@ -107,12 +140,13 @@ function rowHtml(r: PlanRow, n: number | null, first: boolean): string {
     + `</td></tr>`
 }
 const rowsTable = (rows: PlanRow[], numbered: boolean) => `<table role="presentation" width="100%" cellspacing="0" cellpadding="0">${rows.map((r, i) => rowHtml(r, numbered ? i + 1 : null, i === 0)).join('')}</table>`
+const alsoHtml = (rows?: PlanRow[], more?: string, label = true) => (rows && rows.length ? (label ? `<p style="margin:6px 0 0 14px;font:700 9.5px/1.4 ${F};letter-spacing:.12em;text-transform:uppercase;color:${FAINT}">Other tasks</p>` : '') + rowsTable(rows, false) + (more ? `<p style="margin:2px 0 0 14px;font:11.5px/1.5 ${F};color:${FAINT}">${esc(more)}</p>` : '') : '')
 function sectionHtml(s: PlanSection): string {
   const n = sectionCount(s)
   const title = `<p style="margin:0 0 6px;font:700 10.5px/1.4 ${F};letter-spacing:.16em;text-transform:uppercase;color:${s.tone === 'red' && n ? RED : GOLD}">${esc(s.title)}${n ? ` <span style="font-weight:400;letter-spacing:.04em;color:${FAINT}">&middot; ${n}</span>` : ''}</p>`
   let inner = ''
   if (s.groups && s.groups.length) {
-    inner = s.groups.map((g, i) => `<p style="margin:${i ? 14 : 4}px 0 2px;font:14px/1.4 ${F};color:${INK}"><b>${esc(g.name)}</b>${g.meta ? ` <span style="font-size:12px;color:${MUTED}">&middot; ${esc(g.meta)}</span>` : ''}</p>` + rowsTable(g.rows, true)).join('')
+    inner = s.groups.map((g, i) => `<p style="margin:${i ? 14 : 4}px 0 2px;font:14px/1.4 ${F};color:${INK}"><b>${esc(g.name)}</b>${g.meta ? ` <span style="font-size:12px;color:${MUTED}">&middot; ${esc(g.meta)}</span>` : ''}</p>` + (g.rows.length ? rowsTable(g.rows, true) : '') + alsoHtml(g.also, g.more, g.rows.length > 0)).join('')
   } else if (s.rows && s.rows.length) inner = rowsTable(s.rows, false)
   else inner = `<p style="margin:2px 0 0;font:13px/1.5 ${F};color:${MUTED}">${esc(s.empty || 'Nothing here today.')}</p>`
   if (s.more) inner += `<p style="margin:6px 0 0;font:11.5px/1.5 ${F};color:${FAINT}">${esc(s.more)}</p>`
@@ -122,7 +156,7 @@ function tilesHtml(tiles: PlanTile[]): string {
   if (!tiles.length) return ''
   const per = 3, rows: string[] = []
   for (let i = 0; i < tiles.length; i += per) {
-    rows.push(`<tr>${tiles.slice(i, i + per).map((t, j) => `<td valign="top" width="33%" style="padding:10px 8px 10px ${j ? '14px' : '0'};${j ? `border-left:1px solid ${RULE}` : ''}"><div style="font:700 10px/1.3 ${F};letter-spacing:.1em;text-transform:uppercase;color:${MUTED}">${esc(t.label)}</div><div style="font:27px/1.15 ${SERIF};margin-top:3px;color:${t.tone && t.tone !== 'none' && t.tone !== 'green' ? toneColor(t.tone) : INK}">${esc(t.value)}</div></td>`).join('')}</tr>`)
+    rows.push(`<tr>${tiles.slice(i, i + per).map((t, j) => `<td valign="top" width="33%" style="padding:10px 8px 10px ${j ? '14px' : '0'};${j ? `border-left:1px solid ${RULE}` : ''}"><div style="font:700 10px/1.3 ${F};letter-spacing:.1em;text-transform:uppercase;color:${MUTED}">${esc(t.label)}</div><div style="font:27px/1.15 ${SERIF};margin-top:3px;color:${t.tone && t.tone !== 'none' && t.tone !== 'green' ? toneColor(t.tone) : INK}">${esc(t.value)}</div>${t.note ? `<div style="font:11px/1.4 ${F};color:${FAINT}">${esc(t.note)}</div>` : ''}</td>`).join('')}</tr>`)
   }
   return `<div style="background:${SOFT};padding:8px 22px 6px"><table role="presentation" width="100%" cellspacing="0" cellpadding="0">${rows.join('')}</table></div>`
 }
