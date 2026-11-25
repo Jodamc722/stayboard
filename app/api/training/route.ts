@@ -11,6 +11,7 @@ import {
   listPeople, candidates, ensurePerson, updatePerson, listAssignments, assign, unassign, complete, reopen, recordView,
   type Lang,
 } from '@/lib/training'
+import { onboardingSummary } from '@/lib/team-member'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -30,8 +31,8 @@ export async function GET(req: NextRequest) {
     const items = await listItems(all)
     const [urls, people, assignments] = await Promise.all([playableUrls(items), listPeople(), listAssignments()])
     const me = String(gate.access.email || '').toLowerCase()
-    const cands = can.edit ? await candidates() : []
-    return NextResponse.json({ ok: true, items, urls, people, assignments, candidates: cands, can, me })
+    const [cands, onboarding] = can.edit ? await Promise.all([candidates(), onboardingSummary()]) : [[], {}]
+    return NextResponse.json({ ok: true, items, urls, people, assignments, candidates: cands, onboarding, can, me })
   } catch (e: any) { return bad(String(e?.message || e), 500) }
 }
 

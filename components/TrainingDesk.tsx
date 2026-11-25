@@ -11,6 +11,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { Loader2, RefreshCw, Plus, Play, Check, Copy, Link2, Pencil, Archive, RotateCcw, Users, Search, X, Upload, BookOpen, FileText, Video, Languages, ArrowUp, ArrowDown, ArrowRight, ExternalLink, ChevronDown, ClipboardCheck } from 'lucide-react'
 import { LeanHead, Pill, Tag, IconBtn, LeanList, LeanRow, LeanEmpty, LeanTabs, LeanPick, Tip } from '@/components/lean'
 import { Sheet } from '@/components/Sheet'
+import { ProfileSheet, OnboardSheet, PushSheet, QuizEditor, TRACKS as TRACK_OPTS } from '@/components/TeamOnboarding'
 
 type Lang = 'en' | 'es'
 type Item = {
@@ -22,7 +23,8 @@ type Item = {
 type Person = { key: string; name: string; email: string | null; lang: Lang; code: string; dept: string | null; market: string | null }
 type Assignment = { id: string; itemId: string; personKey: string; assignedBy: string | null; assignedAt: string; dueOn: string | null; completedAt: string | null; completedLang: string | null; completedVia: string | null }
 type Candidate = { key: string; name: string; email: string | null; dept: string | null; market: string | null; source: 'user' | 'staff' }
-type Bundle = { items: Item[]; urls: Record<string, { en: string | null; es: string | null }>; people: Person[]; assignments: Assignment[]; candidates: Candidate[]; can: { edit: boolean; full: boolean }; me: string }
+type OnbSum = { track: string | null; startDate: string | null; invitedAt: string | null; onboardedAt: string | null; apps: number; ack: boolean; openIssues: number }
+type Bundle = { items: Item[]; urls: Record<string, { en: string | null; es: string | null }>; people: Person[]; assignments: Assignment[]; candidates: Candidate[]; onboarding?: Record<string, OnbSum>; can: { edit: boolean; full: boolean }; me: string }
 type TabKey = 'library' | 'people' | 'mine' | 'inspections'
 
 const TAGS = ['breezeway', 'housekeeping', 'maintenance', 'inspection', 'ccs', 'office', 'safety', 'lighthouse']
@@ -76,6 +78,9 @@ export function TrainingDesk() {
   const [editing, setEditing] = useState<Item | 'new' | null>(null)
   const [assigning, setAssigning] = useState<{ itemIds: string[]; personKey?: string } | null>(null)
   const [toast, setToast] = useState<string | null>(null)
+  const [profileKey, setProfileKey] = useState<string | null>(null)
+  const [onboarding, setOnboarding] = useState<{ key?: string; name?: string; email?: string | null; market?: string | null } | null>(null)
+  const [pushing, setPushing] = useState(false)
   const say = (m: string) => { setToast(m); setTimeout(() => setToast(null), 6000) }
 
   useEffect(() => { try { const l = localStorage.getItem('training-lang'); if (l === 'es' || l === 'en') setLang(l) } catch {} }, [])
@@ -197,7 +202,8 @@ export function TrainingDesk() {
       ) : null}
 
       {tab === 'people' && data && can.edit ? (
-        <PeopleView people={people} byPerson={byPerson} itemById={itemById} today={today} lang={lang}
+        <PeopleView people={people} byPerson={byPerson} itemById={itemById} today={today} lang={lang} onb={data.onboarding || {}}
+          onProfile={setProfileKey} onOnboard={(p) => setOnboarding(p ? { key: p.key, name: p.name, email: p.email, market: p.market } : {})} onPush={() => setPushing(true)}
           onAssign={(pk) => setAssigning({ itemIds: [], personKey: pk })} onCopy={copyLink} onLang={setPersonLang}
           onDone={(itemId, pk) => markDone(itemById[itemId], pk)} onUnassign={unassign} onReopen={reopen} onNewPerson={() => setAssigning({ itemIds: [] })} />
       ) : null}
@@ -220,6 +226,9 @@ export function TrainingDesk() {
 
       {editing ? <EditSheet item={editing === 'new' ? null : editing} onClose={() => setEditing(null)} onSaved={(m) => { setEditing(null); say(m); load(true) }} /> : null}
       {assigning ? <AssignSheet items={items} candidates={data?.candidates || []} people={people} preset={assigning} lang={lang} onClose={() => setAssigning(null)} onDone={(m) => { setAssigning(null); say(m); load(true) }} /> : null}
+      {profileKey ? <ProfileSheet personKey={profileKey} items={items} onClose={() => { setProfileKey(null); load(true) }} say={say} /> : null}
+      {onboarding ? <OnboardSheet preset={onboarding} candidates={data?.candidates || []} onClose={() => setOnboarding(null)} onDone={(m, key) => { setOnboarding(null); say(m); load(true); setProfileKey(key) }} /> : null}
+      {pushing ? <PushSheet onClose={() => setPushing(false)} say={say} /> : null}
       {toast ? <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-[80] rounded-xl bg-ink text-white text-[12.5px] px-4 py-2 shadow-lg max-w-[90vw]">{toast}</div> : null}
     </div>
   )
@@ -317,39 +326,47 @@ function ItemRow({ item, lang, url, can, assigned, people, me, today, onDone, on
 }
 
 // ---------------------------------------------------------------- people
-function PeopleView({ people, byPerson, itemById, today, lang, onAssign, onCopy, onLang, onDone, onUnassign, onReopen, onNewPerson }: {
+function PeopleView({ people, byPerson, itemById, today, lang, onb, onProfile, onOnboard, onPush, onAssign, onCopy, onLang, onDone, onUnassign, onReopen, onNewPerson }: {
   people: Person[]; byPerson: Record<string, Assignment[]>; itemById: Record<string, Item>; today: string; lang: Lang
+  onb: Record<string, OnbSum>; onProfile: (pk: string) => void; onOnboard: (p: Person | null) => void; onPush: () => void
   onAssign: (pk: string) => void; onCopy: (p: Person) => void; onLang: (p: Person, l: Lang) => void
   onDone: (itemId: string, pk: string) => void; onUnassign: (itemId: string, pk: string) => void; onReopen: (itemId: string, pk: string) => void; onNewPerson: () => void
 }) {
-  const [filter, setFilter] = useState<'all' | 'pending' | 'late' | 'done'>('all')
+  const [filter, setFilter] = useState<'all' | 'onboarding' | 'retraining' | 'pending' | 'late' | 'done'>('all')
   const rows = people.map(p => {
     const as = (byPerson[p.key] || []).filter(a => itemById[a.itemId])
     const done = as.filter(a => a.completedAt).length
     const late = as.filter(a => !a.completedAt && a.dueOn && a.dueOn < today).length
     return { p, as, done, late, pending: as.length - done }
-  }).filter(r => filter === 'all' || (filter === 'pending' && r.pending) || (filter === 'late' && r.late) || (filter === 'done' && r.as.length && r.pending === 0))
+  }).filter(r => filter === 'all' || (filter === 'onboarding' && onb[r.p.key]?.track && !onb[r.p.key]?.onboardedAt) || (filter === 'retraining' && onb[r.p.key]?.openIssues) || (filter === 'pending' && r.pending) || (filter === 'late' && r.late) || (filter === 'done' && r.as.length && r.pending === 0))
     .sort((a, b) => (b.late - a.late) || (b.pending - a.pending) || a.p.name.localeCompare(b.p.name))
   return (
     <>
       <div className="mb-3 flex items-center gap-2 flex-wrap">
-        <LeanPick value={filter} size="sm" onPick={setFilter} options={[{ v: 'all', label: lang === 'es' ? 'Todos' : 'Everyone' }, { v: 'pending', label: lang === 'es' ? 'Con pendientes' : 'Has pending' }, { v: 'late', label: lang === 'es' ? 'Vencidos' : 'Overdue' }, { v: 'done', label: lang === 'es' ? 'Al día' : 'All done' }]} />
-        <button onClick={onNewPerson} className={`ml-auto ${btn()}`}><Users size={14} /> {lang === 'es' ? 'Asignar' : 'Assign'}</button>
+        <LeanPick value={filter} size="sm" onPick={setFilter} options={[{ v: 'all', label: lang === 'es' ? 'Todos' : 'Everyone' }, { v: 'onboarding', label: lang === 'es' ? 'Incorporándose' : 'Onboarding' }, { v: 'retraining', label: lang === 'es' ? 'Reentrenando' : 'Retraining' }, { v: 'pending', label: lang === 'es' ? 'Con pendientes' : 'Has pending' }, { v: 'late', label: lang === 'es' ? 'Vencidos' : 'Overdue' }, { v: 'done', label: lang === 'es' ? 'Al día' : 'All done' }]} />
+        <button onClick={onPush} className={`ml-auto ${btn('ghost')}`}><ClipboardCheck size={14} /> {lang === 'es' ? 'Publicar horario' : 'Post schedule'}</button>
+        <button onClick={onNewPerson} className={btn('ghost')}><Users size={14} /> {lang === 'es' ? 'Asignar' : 'Assign'}</button>
+        <button onClick={() => onOnboard(null)} className={btn()}><Plus size={14} /> {lang === 'es' ? 'Incorporar' : 'Onboard new hire'}</button>
       </div>
       {!rows.length ? <LeanEmpty>{people.length ? (lang === 'es' ? 'Nadie con ese filtro.' : 'Nobody matches that filter.') : (lang === 'es' ? 'Nadie tiene capacitación asignada todavía.' : 'Nobody has training assigned yet. Assign a video to get started.')}</LeanEmpty> : (
         <LeanList>
           {rows.map(({ p, as, done, late, pending }) => (
             <LeanRow key={p.key}
-              lead={<button onClick={() => onAssign(p.key)} className="shrink-0 inline-flex items-center gap-1 rounded-lg border border-line bg-white px-2.5 py-1.5 text-[12px] font-semibold text-ink"><Plus size={12} /> {lang === 'es' ? 'Asignar' : 'Assign'}</button>}
+              lead={<button onClick={() => onProfile(p.key)} className="shrink-0 inline-flex items-center gap-1 rounded-lg bg-ink text-white px-2.5 py-1.5 text-[12px] font-semibold">{lang === 'es' ? 'Perfil' : 'Profile'}</button>}
               name={p.name}
               meta={[p.dept ? cap(p.dept) : null, p.market ? cap(p.market) : null, p.email].filter(Boolean).join(' · ')}
               tags={<>
+                {onb[p.key]?.track ? (onb[p.key].onboardedAt ? <Tag tone="emerald" title="Apps, training, quizzes and handbook all done">{lang === 'es' ? 'Incorporado' : 'Onboarded'}</Tag> : <Tag tone="amber" title={`Apps ${onb[p.key].apps}/4 · handbook ${onb[p.key].ack ? 'signed' : 'not signed'}`}>{lang === 'es' ? 'Incorporándose' : 'Onboarding'} · {onb[p.key].apps}/4 apps</Tag>) : null}
+                {onb[p.key]?.track ? <Tag>{TRACK_OPTS.find(x => x.v === onb[p.key].track)?.label || onb[p.key].track}</Tag> : null}
+                {onb[p.key]?.openIssues ? <Tag tone="rose">{lang === 'es' ? 'Reentrenando' : 'Retraining'}</Tag> : null}
                 <Tag tone={as.length && pending === 0 ? 'emerald' : late ? 'rose' : pending ? 'amber' : 'slate'} title="Done of assigned">{done}/{as.length}</Tag>
                 {late ? <Tag tone="rose">{late} {lang === 'es' ? 'vencidos' : 'late'}</Tag> : null}
                 <Tag title="The language their link opens in">{p.lang.toUpperCase()}</Tag>
                 {!p.email ? <Tag tone="sky" title="No Lighthouse login — reaches them through their personal link">{lang === 'es' ? 'enlace' : 'link'}</Tag> : null}
               </>}
               actions={<>
+                <IconBtn title={lang === 'es' ? 'Asignar' : 'Assign training'} onClick={() => onAssign(p.key)}><Plus size={14} /></IconBtn>
+                {!onb[p.key]?.track ? <IconBtn title={lang === 'es' ? 'Incorporar' : 'Start onboarding'} onClick={() => onOnboard(p)}><Users size={14} /></IconBtn> : null}
                 <IconBtn title={lang === 'es' ? 'Copiar su enlace personal' : 'Copy their personal link'} onClick={() => onCopy(p)}><Copy size={14} /></IconBtn>
                 <IconBtn title={lang === 'es' ? 'Abrir su página' : 'Open their page'} href={'/learn/' + p.code}><Link2 size={14} /></IconBtn>
               </>}
@@ -578,6 +595,7 @@ function EditSheet({ item, onClose, onSaved }: { item: Item | null; onClose: () 
           <div><Label hint="everyone with a link sees it">Required</Label><LeanPick<'yes' | 'no'> value={f.required ? 'yes' : 'no'} size="sm" onPick={v => set('required', v === 'yes')} options={[{ v: 'yes', label: 'Yes' }, { v: 'no', label: 'No' }]} /></div>
           <div><Label hint="lower first">Order</Label><input type="number" value={f.sortOrder} onChange={e => set('sortOrder', Number(e.target.value))} className={field + ' w-24'} /></div>
         </div>
+        {saved ? <QuizEditor itemId={saved.id} /> : <p className="text-[12px] text-muted">Save once to add a quiz.</p>}
       </div>
     </Sheet>
   )
