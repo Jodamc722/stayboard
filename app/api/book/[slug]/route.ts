@@ -5,6 +5,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { readBooking, openSlots, createBookingEvent, rateCheck, publicType, BOOKING_KEY } from '@/lib/booking'
 import { setSetting } from '@/lib/app-settings'
 import { readRecord, saveRecord } from '@/lib/owner-onboard-server'
+import { sendGmail } from '@/lib/gmail-send'
+import { bookedSubject, bookedHtml } from '@/lib/booking-rules'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -50,6 +52,13 @@ export async function POST(req: NextRequest, { params }: { params: { slug: strin
   const ev = await createBookingEvent(t, { day, time, name, email, phone: String(b?.phone || '').slice(0, 40), note: String(b?.note || '').slice(0, 500), place, ref: (owner?.code || 'pub') + '-' + t.slug,
     also: owner ? [onFile, ...(owner.owners || []).map((x: any) => String(x?.email || ''))] : [], moveEventId: owner && isCall ? owner.call?.eventId : undefined })
   if (!ev.ok) return NextResponse.json({ ok: false, error: ev.error }, { status: 502 })
+  // THE HOST IS TOLD (Jon, 2026-11-24: "please make sure I get email of confirmation of a time booked").
+  // Google emails the guest the invitation but tells the organizer nothing, so a booking used to arrive
+  // silently on the calendar. One email to the host, from their own mailbox. Never fails the booking.
+  const phone = String(b?.phone || '').slice(0, 40), note = String(b?.note || '').slice(0, 500)
+  const base = (process.env.NEXT_PUBLIC_APP_URL || 'https://lighthouse-stay.vercel.app').replace(/\/+$/, '')
+  const mail = { title: t.title, guest: name, email, phone, note, day, time, minutes: t.minutes, where: t.where, link: ev.link, place, eventUrl: ev.eventUrl, moved: !!(owner && isCall && owner.call?.eventId), ownerUrl: owner ? base + '/owner-onboarding/' + owner.code : '' }
+  await sendGmail({ fromEmail: t.host, to: [t.host], subject: bookedSubject(mail), html: bookedHtml(mail), source: 'booking-link' }).catch(() => null)
   if (owner) {
     // on the owner's onboarding: the call record the desk and their timeline already read
     if (isCall) {

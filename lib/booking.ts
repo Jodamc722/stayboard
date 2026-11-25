@@ -21,6 +21,7 @@ import 'server-only'
 import { getSettingFresh, setSetting } from './app-settings'
 import { accessTokenFor, forgetToken } from './gmail-send'
 import { eastern } from './owner-onboard-calendar'
+import { usHoliday, offDays, type CalEvent } from './booking-rules'
 
 export const BOOKING_KEY = 'booking_links'
 const TZ = 'America/New_York'
@@ -110,6 +111,22 @@ export async function busyBlocks(host: string, from: Date, to: Date): Promise<{ 
   if (!r.ok) return { ok: false, error: String(d?.error?.message || 'Google Calendar said no (' + r.status + ').').slice(0, 200), busy: [] }
   return { ok: true, busy: ((d?.calendars?.primary?.busy || []) as any[]).map(b => ({ s: new Date(b.start).getTime(), e: new Date(b.end).getTime() })) }
 }
+/**
+ * THE HOST'S DAYS OFF (Jon, 2026-11-24). An all-day "Out of office" closes its days even when Google has
+ * it marked Free, which free/busy never reports (lib/booking-rules has the story). One read of the events
+ * in the window; if it fails, free/busy alone decides, as before.
+ */
+export async function hostOffDays(host: string, from: Date, to: Date): Promise<Set<string>> {
+  try {
+    const t = await accessTokenFor(host)
+    if (!t.token) return new Set()
+    const q = new URLSearchParams({ timeMin: from.toISOString(), timeMax: to.toISOString(), singleEvents: 'true', maxResults: '500', fields: 'items(summary,status,eventType,start,end)' })
+    const r = await fetch('https://www.googleapis.com/calendar/v3/calendars/primary/events?' + q.toString(), { cache: 'no-store', headers: { Authorization: 'Bearer ' + t.token } })
+    if (!r.ok) return new Set()
+    return offDays((((await r.json().catch(() => ({}))) as any)?.items || []) as CalEvent[])
+  } catch { return new Set() }
+}
+
 export type DaySlots = { day: string; label: string; times: { time: string; label: string }[] }
 /** Every bookable time for a type, from now to its horizon. Days with nothing free are left out. */
 export async function openSlots(t: BookingType, only?: string): Promise<{ ok: boolean; error?: string; days: DaySlots[] }> {
@@ -117,13 +134,17 @@ export async function openSlots(t: BookingType, only?: string): Promise<{ ok: bo
   const first = only || ymdET(new Date(earliest)), days: string[] = []
   if (only) days.push(only)
   else for (let i = 0; i <= t.horizonDays + 1 && days.length <= t.horizonDays; i++) days.push(ymdET(new Date(earliest + i * 86400_000)))
-  const b = await busyBlocks(t.host, eastern(first, '00:00'), new Date(eastern(days[days.length - 1], '23:59').getTime() + 60_000))
+  const winFrom = eastern(first, '00:00'), winTo = new Date(eastern(days[days.length - 1], '23:59').getTime() + 60_000)
+  const [b, off] = await Promise.all([busyBlocks(t.host, winFrom, winTo), hostOffDays(t.host, winFrom, winTo)])
   if (!b.ok) return { ok: false, error: b.error, days: [] }
   const out: DaySlots[] = []
   const [fh, fm] = t.from.split(':').map(Number), [th, tm] = t.to.split(':').map(Number)
   for (const day of Array.from(new Set(days))) {
     const dow = new Date(day + 'T12:00:00Z').getUTCDay()
     if (t.days.indexOf(dow) < 0) continue
+    // Never on a major US holiday, and never on a day the host's calendar says they are off
+    // (Jon, 2026-11-24: "Why did you have Thanksgiving open").
+    if (usHoliday(day) || off.has(day)) continue
     const times: DaySlots['times'] = []
     // a short call is offered every 15 minutes, anything longer on the half hour
     for (let m = fh * 60 + fm; m + t.minutes <= th * 60 + tm; m += t.minutes <= 15 ? 15 : 30) {
