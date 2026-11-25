@@ -10,9 +10,9 @@ import { cbGetV, cbPostV } from './cloudbeds'
 export const WEBHOOK_EVENTS: [string, string][] = [
   ['reservation', 'created'], ['reservation', 'status_changed'], ['reservation', 'dates_changed'], ['reservation', 'accommodation_changed'],
   ['reservation', 'deleted'], ['reservation', 'notes_changed'], ['guest', 'details_changed'],
-  ['accounting', 'transaction'], ['housekeeping', 'room_condition_changed'], ['roomblock', 'created'], ['roomblock', 'removed'],
+  ['accounting', 'transaction'], ['housekeeping', 'room_condition_changed'], ['roomblock', 'created'], ['roomblock', 'removed'], ['roomblock', 'details_changed'],
 ]
-type Hook = { token: string; lastEventAt?: string | null; lastSyncAt?: string | null; events?: number }
+type Hook = { token: string; lastEventAt?: string | null; lastSyncAt?: string | null; events?: number; subscribedAt?: string | null }
 
 export async function hookState(): Promise<Hook> {
   const h = await getSetting<Hook | null>('garden_cb_webhook', null).catch(() => null)
@@ -36,6 +36,7 @@ export async function subscribe(origin: string): Promise<{ added: string[]; fail
     try { await cbPostV('v1.3', 'postWebhook', { endpointUrl: url, object, action, authHeaderName: 'X-Garden-Token', authHeaderValue: h.token }); added.push(k) }
     catch (e: any) { failed.push(`${k}: ${String(e?.message || e).replace(/^Cloudbeds \w+: /, '').slice(0, 80)}`) }
   }
+  if (added.length || already.size) await setSetting('garden_cb_webhook', { ...(await hookState()), subscribedAt: new Date().toISOString() }, 'realtime').catch(() => {})
   return { added, failed, existing: already.size }
 }
 

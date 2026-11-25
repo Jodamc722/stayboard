@@ -43,13 +43,15 @@ const s = (v: any) => (v == null ? '' : String(v))
 const num = (name: string) => (s(name).match(/\b(\d{3,4})\b/) || [])[1] || ''
 const todayET = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())
 
-export type LinkSettings = { rooms: string[]; ignore: string[]; log: { at: string; room: string; what: string; by: string }[] }
+export type LinkSettings = { rooms: string[]; ignore: string[]; log: { at: string; room: string; what: string; by: string }[]; alertTo: string[]; alerted: string[] }
+/** How far ahead the link looks: a year covers every booking Guesty can hold. */
+export const HORIZON_DAYS = 365
 export type LinkedRoom = { room: string; listingId: string; listingName: string; virtualId: string | null; physicalId: string | null }
 export type Night = { date: string; guesty: 'free' | 'booked' | 'blocked' | 'ours'; cloudbeds: 'free' | 'booked' | 'blocked' | 'ours' | 'ignored'; detail?: string }
 
 export async function linkSettings(): Promise<LinkSettings> {
   const v = await getSettingFresh<Partial<LinkSettings> | null>(KEY, null).catch(() => null)
-  return { rooms: Array.isArray(v?.rooms) ? v!.rooms!.map(String) : [], ignore: Array.isArray(v?.ignore) ? v!.ignore!.map(String) : ['AIRBNB'], log: Array.isArray(v?.log) ? v!.log! : [] }
+  return { rooms: Array.isArray(v?.rooms) ? v!.rooms!.map(String) : [], ignore: Array.isArray(v?.ignore) ? v!.ignore!.map(String) : ['AIRBNB'], log: Array.isArray(v?.log) ? v!.log! : [], alertTo: Array.isArray(v?.alertTo) ? v!.alertTo!.map(String) : [], alerted: Array.isArray(v?.alerted) ? v!.alerted!.map(String) : [] }
 }
 async function note(room: string, what: string, by: string) {
   const cur = await linkSettings()
@@ -77,10 +79,12 @@ type CbBlock = { id: string; reason: string; type: string; start: string; end: s
 /** Cloudbeds blocks touching [from, to], read live (35 days a call is Cloudbeds' limit). */
 async function cbBlocks(from: string, to: string): Promise<CbBlock[]> {
   const seen = new Map<string, CbBlock>()
-  for (let a = ms(from); a <= ms(to); a += 34 * DAY) {
-    const b = Math.min(ms(to), a + 33 * DAY)
-    const { data } = await cbGet<any>('getRoomBlocks', { startDate: iso(a), endDate: iso(b) })
-    for (const x of (Array.isArray(data) ? data : [data]).flatMap((y: any) => Array.isArray(y?.roomBlocks) ? y.roomBlocks : [y])) {
+  const wins: [string, string][] = []
+  for (let a = ms(from); a <= ms(to); a += 34 * DAY) wins.push([iso(a), iso(Math.min(ms(to), a + 33 * DAY))])
+  // Four windows at a time: a year is eleven calls, and one after another would be too slow to be "instant".
+  for (let i = 0; i < wins.length; i += 4) {
+    const got = await Promise.all(wins.slice(i, i + 4).map(([x, y]) => cbGet<any>('getRoomBlocks', { startDate: x, endDate: y })))
+    for (const { data } of got) for (const x of (Array.isArray(data) ? data : [data]).flatMap((y: any) => Array.isArray(y?.roomBlocks) ? y.roomBlocks : [y])) {
       const id = s(x?.roomBlockID || x?.id); if (!id) continue
       seen.set(id, { id, reason: s(x.roomBlockReason || x.reason), type: s(x.roomBlockType || x.type), start: s(x.startDate).slice(0, 10), end: s(x.endDate).slice(0, 10), roomIds: (Array.isArray(x.rooms) ? x.rooms : []).map((r: any) => s(r.roomID)).filter(Boolean) })
     }
@@ -110,16 +114,24 @@ function runs(dates: string[]): [string, string][] {
   return out
 }
 
+/** Cloudbeds' side for the whole property, read once and shared by every room in a run. */
+export type CbSide = { blocks: CbBlock[]; res: Awaited<ReturnType<typeof getReservations>> }
+export async function readCloudbeds(from: string, to: string): Promise<CbSide> {
+  const [blocks, res] = await Promise.all([cbBlocks(from, to), getReservations({ from, to: iso(ms(to) + DAY) })])
+  return { blocks, res }
+}
+
 /** Both calendars for one room, night by night, read live from both systems. */
-export async function readRoom(room: string, from: string, to: string): Promise<{ room: LinkedRoom; nights: Night[]; blocks: CbBlock[]; ours: CbBlock[]; days: Record<string, MultiCalDay> }> {
+export async function readRoom(room: string, from: string, to: string, pre?: { cb?: CbSide; map?: Record<string, LinkedRoom>; st?: LinkSettings }): Promise<{ room: LinkedRoom; nights: Night[]; blocks: CbBlock[]; ours: CbBlock[]; days: Record<string, MultiCalDay> }> {
   if (!D.test(from) || !D.test(to) || to < from) throw new Error('from and to (YYYY-MM-DD) are needed')
-  if ((ms(to) - ms(from)) / DAY > 120) throw new Error('120 nights at most at a time')
-  const map = await roomMap(), r = map[room]
+  if ((ms(to) - ms(from)) / DAY > 400) throw new Error('400 nights at most at a time')
+  const map = pre?.map || await roomMap(), r = map[room]
   if (!r) throw new Error(`Room ${room} has no Botanica listing in Guesty.`)
   const cbIds = [r.virtualId, r.physicalId].filter(Boolean) as string[]
   if (!cbIds.length) throw new Error(`Room ${room} was not found in Cloudbeds.`)
-  const st = await linkSettings()
-  const [blocksAll, res, cal] = await Promise.all([cbBlocks(from, to), getReservations({ from, to: iso(ms(to) + DAY) }), getMultiCalendar([r.listingId], from, to)])
+  const st = pre?.st || await linkSettings()
+  const [cb, cal] = await Promise.all([pre?.cb ? Promise.resolve(pre.cb) : readCloudbeds(from, to), getMultiCalendar([r.listingId], from, to)])
+  const blocksAll = cb.blocks, res = cb.res
   const blocks = blocksAll.filter(b => b.roomIds.some(id => cbIds.includes(id)))
   const stays = res.filter(x => x.status !== 'canceled' && x.status !== 'no_show' && (x.roomNames || []).map(String).includes(room) && x.checkIn && x.checkOut)
   const days: Record<string, MultiCalDay> = {}; for (const d of cal) if (d.listingId === r.listingId) days[d.date] = d
@@ -138,9 +150,9 @@ export async function readRoom(room: string, from: string, to: string): Promise<
 }
 
 /** Make each side show what the other holds, for one room. `dry` only says what it would do. */
-export async function reconcileRoom(room: string, from: string, to: string, by: string, dry = false): Promise<{ room: string; did: string[]; conflicts: string[]; nights: Night[]; ms: number }> {
+export async function reconcileRoom(room: string, from: string, to: string, by: string, dry = false, pre?: { cb?: CbSide; map?: Record<string, LinkedRoom>; st?: LinkSettings }): Promise<{ room: string; did: string[]; conflicts: string[]; nights: Night[]; ms: number }> {
   const t0 = Date.now()
-  const R = await readRoom(room, from, to)
+  const R = await readRoom(room, from, to, pre)
   const did: string[] = [], conflicts: string[] = []
   const gHolds = (n: Night) => n.guesty === 'booked' || n.guesty === 'blocked', cHolds = (n: Night) => n.cloudbeds === 'booked' || n.cloudbeds === 'blocked'
   for (const n of R.nights) if (gHolds(n) && cHolds(n)) conflicts.push(`${n.date}: held on both sides (${n.detail || 'see both calendars'})`)
@@ -161,17 +173,33 @@ export async function reconcileRoom(room: string, from: string, to: string, by: 
   const open = runs(R.nights.filter(n => !cHolds(n) && n.guesty === 'ours').map(n => n.date))
   for (const [a, b] of close) { did.push(`Guesty: closed ${a} → ${b} (held in Cloudbeds)`); if (!dry) await gyBlock(R.room.listingId, a, b, `${MARK} · held in Cloudbeds`) }
   for (const [a, b] of open) { did.push(`Guesty: opened ${a} → ${b}`); if (!dry) await gyOpen(R.room.listingId, a, b) }
+  if (!dry && conflicts.length) await alertConflicts(room, R.nights.filter(n => gHolds(n) && cHolds(n))).catch(() => {})
   if (!dry && (did.length || conflicts.length)) await note(room, [...did, ...conflicts.map(c => 'DOUBLE BOOKING ' + c)].join(' · ').slice(0, 600), by)
   const after = dry || !did.length ? R.nights : (await readRoom(room, from, to)).nights
   return { room, did, conflicts, nights: after, ms: Date.now() - t0 }
 }
 
-/** Every linked room, today through `days` ahead — the Refresh button and the scheduled safety net. */
-export async function reconcileLinked(by: string, days = 60): Promise<{ rooms: number; did: string[]; conflicts: string[]; errors: string[] }> {
+/** A night held on both sides is a double booking: tell someone once per room and night (an in-app notice). */
+async function alertConflicts(room: string, nights: Night[]): Promise<void> {
+  const st = await linkSettings()
+  const fresh = nights.filter(n => !st.alerted.includes(`${room}|${n.date}`))
+  if (!fresh.length) return
+  await setSetting(KEY, { ...st, alerted: [...fresh.map(n => `${room}|${n.date}`), ...st.alerted].slice(0, 300) }, 'calendar-link')
+  const { notify } = await import('../notify')
+  const to = st.alertTo.length ? st.alertTo : ['jon@stay-hospitality.com']
+  await notify(to, { kind: 'calendar_link', title: `Double booking: room ${room}, ${fresh.map(n => n.date).join(', ')}`, body: `Guesty and Cloudbeds both hold ${fresh.length === 1 ? 'this night' : 'these nights'}. ${fresh[0].detail || ''} Nothing was changed; one of the two has to be moved.`.trim(), link: '/garden/users?tab=settings&panel=feeds', entity: { type: 'calendar_link', id: `${room}|${fresh[0].date}` } })
+}
+
+/** Every linked room, today through `days` ahead — the Refresh button and the half-hourly safety net. */
+export async function reconcileLinked(by: string, days = HORIZON_DAYS): Promise<{ rooms: number; did: string[]; conflicts: string[]; errors: string[] }> {
   const st = await linkSettings(), from = todayET(), to = iso(ms(from) + days * DAY)
   const did: string[] = [], conflicts: string[] = [], errors: string[] = []
+  if (!st.rooms.length) return { rooms: 0, did, conflicts, errors }
+  // Cloudbeds is read once for the whole run; each room then needs only its own Guesty calendar.
+  let pre: { cb: CbSide; map: Record<string, LinkedRoom>; st: LinkSettings }
+  try { const [cb, map] = await Promise.all([readCloudbeds(from, to), roomMap()]); pre = { cb, map, st } } catch (e: any) { return { rooms: st.rooms.length, did, conflicts, errors: [String(e?.message || e).slice(0, 200)] } }
   for (const room of st.rooms) {
-    try { const r = await reconcileRoom(room, from, to, by); did.push(...r.did.map(x => `${room}: ${x}`)); conflicts.push(...r.conflicts.map(x => `${room}: ${x}`)) }
+    try { const r = await reconcileRoom(room, from, to, by, false, pre); did.push(...r.did.map(x => `${room}: ${x}`)); conflicts.push(...r.conflicts.map(x => `${room}: ${x}`)); if (r.did.length) pre.cb = await readCloudbeds(from, to) }
     catch (e: any) { errors.push(`${room}: ${String(e?.message || e).slice(0, 160)}`) }
   }
   return { rooms: st.rooms.length, did, conflicts, errors }
@@ -184,12 +212,33 @@ export async function onGuestyEvent(listingId: string): Promise<string | null> {
   const map = await roomMap(), hit = Object.values(map).find(r => r.listingId === listingId)
   if (!hit || !st.rooms.includes(hit.room)) return null
   const from = todayET()
-  await reconcileRoom(hit.room, from, iso(ms(from) + 90 * DAY), 'guesty webhook')
+  await reconcileRoom(hit.room, from, iso(ms(from) + HORIZON_DAYS * DAY), 'guesty webhook')
   return hit.room
 }
 /** Cloudbeds said a booking or a block changed: its events do not name the room reliably, so every linked room is checked. */
 export async function onCloudbedsEvent(): Promise<number> {
   const st = await linkSettings(); if (!st.rooms.length) return 0
-  await reconcileLinked('cloudbeds webhook', 90)
+  await reconcileLinked('cloudbeds webhook')
   return st.rooms.length
+}
+
+const GY_EVENTS = ['reservation.new', 'reservation.updated', 'listing.calendar.updated']
+/** Where the two "tell me at once" connections stand. */
+export async function notificationState(): Promise<{ guesty: { connected: boolean; bookings: boolean; lastEventAt: string | null }; cloudbeds: { subscribed: boolean; lastEventAt: string | null } }> {
+  const { getSetting } = await import('../app-settings')
+  const [g, c] = await Promise.all([getSetting<any>('guesty_webhook', null).catch(() => null), getSetting<any>('garden_cb_webhook', null).catch(() => null)])
+  return { guesty: { connected: !!g?.subscriptionId, bookings: !!g?.linkEvents, lastEventAt: g?.lastEventAt || null }, cloudbeds: { subscribed: !!c?.subscribedAt || !!c?.lastEventAt, lastEventAt: c?.lastEventAt || null } }
+}
+/** Add booking and calendar events to Lighthouse's existing Guesty subscription (it carries guest messages today). */
+export async function enableGuestyEvents(by: string): Promise<{ events: string[] }> {
+  const { getSettingFresh: fresh } = await import('../app-settings')
+  const { listGuestyWebhooks } = await import('../guesty-webhooks')
+  const cur = await fresh<any>('guesty_webhook', null)
+  if (!cur?.subscriptionId || !cur?.url) throw new Error('Guesty notifications are not connected yet (Inbox → Connect sources).')
+  const sub = (await listGuestyWebhooks()).find(w => w.id === cur.subscriptionId)
+  if (!sub) throw new Error('Lighthouse\'s Guesty subscription was not found in Guesty.')
+  const events = Array.from(new Set([...sub.events, ...GY_EVENTS]))
+  await guestyWrite('/webhooks/' + encodeURIComponent(sub.id), { url: sub.url, events }, 'PUT')
+  await setSetting('guesty_webhook', { ...cur, linkEvents: true, linkEventsAt: new Date().toISOString(), linkEventsBy: by }, by)
+  return { events }
 }

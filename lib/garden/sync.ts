@@ -173,6 +173,8 @@ export async function runGardenDesks(out: GardenSyncResult): Promise<void> {
   try { const { syncPhone } = await import('./phone'); out.phone = await syncPhone() } catch (e: any) { out.errors.push(`phone: ${e?.message || e}`) }
   // Homebase: the hotel's contract labor — people and punches (lib/garden/homebase). Quiet until set up.
   try { const { syncGardenHomebase } = await import('./homebase'); out.homebase = await syncGardenHomebase() } catch (e: any) { out.errors.push(`homebase: ${e?.message || e}`) }
+  // The Guesty ⇄ Cloudbeds calendar link's safety net (lib/garden/calendar-link): does nothing until a room is linked.
+  try { const { reconcileLinked } = await import('./calendar-link'); const r = await reconcileLinked('sync'); if (r.errors.length) out.errors.push(`calendar link: ${r.errors.join('; ').slice(0, 200)}`) } catch (e: any) { out.errors.push(`calendar link: ${e?.message || e}`) }
 }
 
 /** arrival_tomorrow / departure_today, once per reservation per day (stamped in evidence-free form on app_settings). */
