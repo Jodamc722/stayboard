@@ -155,7 +155,10 @@ export async function reconcileRoom(room: string, from: string, to: string, by: 
   const R = await readRoom(room, from, to, pre)
   const did: string[] = [], conflicts: string[] = []
   const gHolds = (n: Night) => n.guesty === 'booked' || n.guesty === 'blocked', cHolds = (n: Night) => n.cloudbeds === 'booked' || n.cloudbeds === 'blocked'
-  for (const n of R.nights) if (gHolds(n) && cHolds(n)) conflicts.push(`${n.date}: held on both sides (${n.detail || 'see both calendars'})`)
+  // A DOUBLE BOOKING is a guest on each side for the same night. A booking on one side and a block made by
+  // hand on the other is the opposite: somebody already closed it, which is what the link would have done.
+  const both = (n: Night) => n.guesty === 'booked' && n.cloudbeds === 'booked'
+  for (const n of R.nights) if (both(n)) conflicts.push(`${n.date}: a booking on both sides (${n.detail || 'see both calendars'})`)
   const cbRoom = R.room.virtualId || R.room.physicalId!
 
   // Guesty holds → Cloudbeds blocked. Our old blocks in the window are replaced only when they no longer fit.
@@ -173,7 +176,7 @@ export async function reconcileRoom(room: string, from: string, to: string, by: 
   const open = runs(R.nights.filter(n => !cHolds(n) && n.guesty === 'ours').map(n => n.date))
   for (const [a, b] of close) { did.push(`Guesty: closed ${a} → ${b} (held in Cloudbeds)`); if (!dry) await gyBlock(R.room.listingId, a, b, `${MARK} · held in Cloudbeds`) }
   for (const [a, b] of open) { did.push(`Guesty: opened ${a} → ${b}`); if (!dry) await gyOpen(R.room.listingId, a, b) }
-  if (!dry && conflicts.length) await alertConflicts(room, R.nights.filter(n => gHolds(n) && cHolds(n))).catch(() => {})
+  if (!dry && conflicts.length) await alertConflicts(room, R.nights.filter(both)).catch(() => {})
   if (!dry && (did.length || conflicts.length)) await note(room, [...did, ...conflicts.map(c => 'DOUBLE BOOKING ' + c)].join(' · ').slice(0, 600), by)
   const after = dry || !did.length ? R.nights : (await readRoom(room, from, to)).nights
   return { room, did, conflicts, nights: after, ms: Date.now() - t0 }
