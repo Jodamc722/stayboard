@@ -44,8 +44,11 @@
 //   don't (a view, a pool, a striking room) or the best living/sleeping space; never a bathroom,
 //   never a plain exterior, never a collage / text overlay / watermark (Airbnb suppresses them and
 //   they read as ads), never a vertical (it gets cropped in every grid), never people.
-//   The first five answer the guest's five questions in one swipe: what's special · where I sleep ·
-//   where I sit · where I cook · where I bathe — one photo each, wide, best quality.
+//   The first five answer the guest's questions in one swipe: what's special · where I sleep ·
+//   where I sit · where I cook · the outdoor space — one photo each, wide, best quality. Since
+//   2026-11-25 each of the five is held to the cover's standard (Airbnb may show any of them on the
+//   search card), so an ordinary bathroom waits for the tour, and a unit's five are kept distinct
+//   from its sister units' (see SISTER UNITS below).
 //
 //   THE BOOKING (inside the listing). Guests scroll to VERIFY: every bed exists, the bathroom is
 //   clean, the kitchen is real, the outdoor space is as promised. So the tour walks the home in
@@ -86,6 +89,11 @@ export type PhotoFacts = {
   enhanceWhy?: string
   /** Amenities from the house vocabulary this photo plainly shows (toaster, crib, BBQ grill…). */
   amenitiesSeen?: string[]
+  /** A 64-bit difference hash of the image (16 hex). The same photo on a sister unit has (nearly) the same hash. */
+  hash?: string
+  /** 0–100 from the analyst: how specific this photo is to THIS unit (its own room, its own view) rather than
+   *  something every unit in the building also shows (the pool, the lobby, a generic skyline). */
+  distinct?: number
 }
 
 export type Slot = 'cover' | 'showcase' | 'tour' | 'building' | 'demoted'
@@ -144,7 +152,7 @@ export function normalizeRooms<T extends { room: string; category: string }>(fac
   return facts.map(f => ({ ...f, room: normalizeRoom(f.room, f.category, profile) }))
 }
 
-export const ORDER_RULE = "1 cover wins the click · 2–5 answer the guest's five questions in one swipe (what's special · where I sleep · sit · cook · bathe), one wide shot each · then the tour room by room as a guest walks it, wide → detail · then pool, gym, lobby, exterior · duplicates, close-up overload, verticals, text/collages and stock last, flagged to cut — aim for 20–35 strong photos"
+export const ORDER_RULE = "1 cover wins the click · 2–5 are four more photos that could each be the cover (what's special · where I sleep · sit · cook · the outdoor space), one wide shot each, and not the same opening as a sister unit · then the tour room by room as a guest walks it, wide → detail · then pool, gym, lobby, exterior · duplicates, close-up overload, verticals, text/collages and stock last, flagged to cut — aim for 20–35 strong photos"
 
 // Where a room sits in the walk. Unknown rooms slot in by category.
 const WALK: { re: RegExp; rank: number; label: string }[] = [
@@ -173,6 +181,96 @@ const SHOT_RANK: Record<ShotType, number> = { wide: 0, medium: 1, detail: 2 }
 const BAD_FAULTS = new Set(['blurry', 'dark', 'signage', 'people', 'watermark', 'clutter', 'text', 'collage'])
 // Never on a cover, never in the first five — the grid crops or suppresses them (THE CLICK).
 const COVER_KILLERS = new Set(['vertical', 'collage', 'text', 'watermark', 'people', 'blurry', 'dark', 'mirror-selfie'])
+// Airbnb crops the search card to a centred square (its own photo guide: "keep key subjects centered").
+// A photo whose subject sits at the edge loses it there. Not a reason to cut it from the tour.
+const EDGE = 'edge-subject'
+
+// ── SISTER UNITS: ONE BUILDING, DISTINCT OPENINGS ───────────────────────────────────────────────
+// Jon, 2026-11-25: "audit the way we decide the first 5 photos … if same building please switch it up
+// and make sure that is on the model. Need to be distinct."
+//
+// What the audit found (live data, 2026-11-25): the engine ranked every listing alone. A building's
+// units share its pool, rooftop and lobby photos, and those carry the cover bonuses, so sister units
+// converge on one opening. 9 of 28 Arya listings led with the pool and one photo file sat in the first
+// five of 12 of them; 7 of 13 Capri listings led with the pool; 39 of 53 Botanica rooms led with the
+// same kind of bedroom shot and 17 shared a cover file. In search that reads as one listing repeated:
+// the guest cannot tell the units apart, and our own units compete for one click.
+//
+// The rule now. A sister unit's opening (its cover and first five, live or just proposed) is an input:
+//   · the SAME PHOTO as a sister unit's cover is never this unit's cover while another strong shot exists;
+//   · a SCENE (the pool, the rooftop, "the bedroom") may lead about a third of a building; past that
+//     each further unit pays for choosing it, shared spaces more than the unit's own rooms;
+//   · a photo that is specific to this unit (the analyst's `distinct`) is preferred for the cover over
+//     one every unit could show;
+//   · in seats 2–5 a photo sister units already use in their five gives way to an equally good one they
+//     do not, and the second photo (the first swipe) is not the scene most sister units put second.
+// The same photo is recognised by its hash (`hamming`), so it matches even when each unit uploaded its
+// own copy. Units still LOOK like one building; they just do not open with the same frame.
+export type SiblingShot = { hash?: string; scene: string }
+/** One sister unit's opening. `five[0]` is its cover. */
+export type SiblingOpening = { name: string; five: SiblingShot[] }
+const SHARED_SCENE = /^(pool|rooftop|gym|lobby|lounge|parking|exterior|amenity)$/
+/** Bits that differ between two hashes; 64 when either is missing. */
+export function hamming(a?: string, b?: string): number {
+  if (!a || !b || a.length !== 16 || b.length !== 16) return 64
+  let n = 0
+  for (let i = 0; i < 16; i++) { let x = parseInt(a[i], 16) ^ parseInt(b[i], 16); if (Number.isNaN(x)) return 64; while (x) { n += x & 1; x >>= 1 } }
+  return n
+}
+/** Two hashes this close are the same photograph (a re-upload, a resize, a light edit). */
+export const SAME_SHOT_BITS = 8
+export const sameShot = (a?: string, b?: string) => hamming(a, b) <= SAME_SHOT_BITS
+/** The scene a photo stands for when units are compared: the shared space, or the unit's room. */
+export function sceneOf(p: { room: string; category: string }): string {
+  const r = rk(p.room)
+  if (/pool|marina|beach/.test(r)) return 'pool'
+  if (/roof|sky-?deck|sundeck/.test(r)) return 'rooftop'
+  if (/gym|fitness|spa|sauna/.test(r)) return 'gym'
+  if (/lobby|reception|elevator|corridor/.test(r)) return 'lobby'
+  if (/lounge|club|coworking|cinema|game/.test(r)) return 'lounge'
+  if (/park|garage/.test(r)) return 'parking'
+  if (/exterior|facade|building|street|aerial/.test(r) || p.category === 'exterior') return 'exterior'
+  if (/^bedroom/.test(r)) return 'bedroom'
+  if (/^bath/.test(r)) return 'bathroom'
+  if (r) return r
+  return p.category === 'amenity' ? 'amenity' : rk(p.category) || 'other'
+}
+const SCENE_WORDS: Record<string, string> = { pool: 'the pool', rooftop: 'the rooftop', gym: 'the gym', lobby: 'the lobby', lounge: 'a lounge', parking: 'the garage', exterior: 'the exterior', bedroom: 'a bedroom', bathroom: 'a bathroom', living: 'the living room', kitchen: 'the kitchen', dining: 'the dining area', balcony: 'the balcony', view: 'the view', workspace: 'the desk', entry: 'the entry', amenity: 'a building amenity' }
+export const sceneWords = (scene: string) => SCENE_WORDS[scene] || 'the ' + scene.replace(/-/g, ' ')
+/** A scene may lead this share of a building before another unit choosing it pays. */
+export const SCENE_SHARE_FREE = 1 / 3
+export type SiblingRead = { n: number; sameCover: string[]; sceneCover: number; inFives: number; scene: string }
+/** How a photo sits against the sister units' openings. */
+export function siblingRead(p: PhotoFacts, sibs: SiblingOpening[] | undefined): SiblingRead {
+  const scene = sceneOf(p)
+  const out: SiblingRead = { n: 0, sameCover: [], sceneCover: 0, inFives: 0, scene }
+  for (const s of sibs || []) {
+    if (!s.five.length) continue
+    out.n++
+    const c = s.five[0]
+    if (sameShot(p.hash, c.hash)) out.sameCover.push(s.name)
+    if (c.scene && c.scene === scene) out.sceneCover++
+    if (s.five.some(x => sameShot(p.hash, x.hash))) out.inFives++
+  }
+  return out
+}
+/** What choosing this photo as the COVER costs, given the sister units. 0 with no sister units. */
+export function coverCrowding(p: PhotoFacts, sibs: SiblingOpening[] | undefined): number {
+  const r = siblingRead(p, sibs)
+  if (!r.n) return 0
+  let cost = 0
+  if (r.sameCover.length) cost += 30
+  const over = r.sceneCover / r.n - SCENE_SHARE_FREE
+  if (over > 0) cost += Math.round(over * (SHARED_SCENE.test(r.scene) ? 60 : 24))
+  if (typeof p.distinct === 'number') { if (p.distinct < 60) cost += Math.round((60 - p.distinct) / 6); else if (p.distinct >= 85) cost -= 4 }
+  return cost
+}
+/** What choosing this photo for seats 2–5 costs, given the sister units. */
+export function showcaseCrowding(p: PhotoFacts, sibs: SiblingOpening[] | undefined): number {
+  const r = siblingRead(p, sibs)
+  if (!r.n) return 0
+  return (r.sameCover.length ? 8 : 0) + Math.min(12, r.inFives * 3)
+}
 
 const rk = (s: string) => String(s || '').trim().toLowerCase()
 function walkOf(p: PhotoFacts, profile?: UnitProfile): { rank: number; label: string } {
@@ -209,7 +307,7 @@ function showable(p: PhotoFacts): boolean {
 }
 
 /** Score a photo as a COVER. Wide, bright, a space or a view a guest books for. */
-export function heroScore(p: PhotoFacts): number {
+export function heroScore(p: PhotoFacts, sibs?: SiblingOpening[]): number {
   if (p.kind !== 'property' || p.duplicateOf) return 0
   // Quality carries ~70% of the score so candidates spread out instead of all hitting 100.
   let s = p.quality * 0.7
@@ -228,14 +326,15 @@ export function heroScore(p: PhotoFacts): number {
   // Differentiators win clicks: a view, a pool, a rooftop, a striking feature the neighbours lack.
   if (/infinity|rooftop|ocean|bay|skyline|sunset|private-pool|hot-tub|fireplace|floor-to-ceiling/.test(sp)) s += 6
   // Cover killers: the grid crops verticals, Airbnb suppresses collages/text, people read as ads.
-  for (const f of p.faults) { if (COVER_KILLERS.has(f)) s -= 35; else if (BAD_FAULTS.has(f)) s -= 15 }
+  for (const f of p.faults) { if (COVER_KILLERS.has(f)) s -= 35; else if (BAD_FAULTS.has(f)) s -= 15; else if (f === EDGE) s -= 12 }
   if (p.quality < PLAYBOOK.coverMinQuality) s -= 10
+  s -= coverCrowding(p, sibs)
   return Math.max(0, Math.min(100, Math.round(s)))
 }
 
-export function rankHeroes(photos: PhotoFacts[], limit = 4): HeroCandidate[] {
+export function rankHeroes(photos: PhotoFacts[], limit = 4, sibs?: SiblingOpening[]): HeroCandidate[] {
   return photos
-    .map(p => ({ _id: p._id, score: heroScore(p), why: `${p.subject || p.category}${p.shotType === 'wide' ? ' · wide' : ''} · quality ${p.quality}` }))
+    .map(p => ({ _id: p._id, score: heroScore(p, sibs), why: `${p.subject || p.category}${p.shotType === 'wide' ? ' · wide' : ''} · quality ${p.quality}` }))
     .filter(c => c.score > 0)
     .sort((a, b) => b.score - a.score)
     .slice(0, limit)
@@ -262,7 +361,13 @@ export function spaceType(p: PhotoFacts, studio = false): SpaceType {
   return 'other'
 }
 export const SPACE_LABEL: Record<SpaceType, string> = { special: 'the view', amenity: 'pool / rooftop', bedroom: 'where I sleep', living: 'where I sit', kitchen: 'where I cook', outdoor: 'balcony / outdoor', bath: 'where I bathe', other: 'other' }
-const SPACE_BONUS: Record<SpaceType, number> = { special: 14, amenity: 11, bedroom: 12, living: 10, kitchen: 9, outdoor: 7, bath: 4, other: 0 }
+// ANY OF THE FIVE CAN BE THE COVER (audit 2026-11-25). Airbnb's help page calls the first five the
+// photos "prominently displayed", and since its 2026 Summer Release hosts report search showing one of
+// the first five instead of the chosen cover. So a seat in the five is held to the cover's standard:
+// a bathroom earns one only when it is a feature in its own right (a soaking tub, a hero-grade shot);
+// an ordinary clean bathroom belongs in the tour, where guests go to verify it.
+const SPACE_BONUS: Record<SpaceType, number> = { special: 14, amenity: 11, bedroom: 12, living: 10, kitchen: 9, outdoor: 7, bath: -8, other: 0 }
+const featureBath = (p: PhotoFacts) => p.quality >= 80 && (p.heroWorthy || /soaking-tub|freestanding|spa-bath/.test(p.sellingPoints.join(' ')))
 /** What a photo is worth in positions 2–5 on its own — before diversity. */
 export function showcaseScore(p: PhotoFacts): number {
   if (p.kind !== 'property' || p.duplicateOf) return 0
@@ -270,11 +375,11 @@ export function showcaseScore(p: PhotoFacts): number {
   s += p.shotType === 'wide' ? 12 : p.shotType === 'medium' ? 3 : -25
   if (p.heroWorthy) s += 5
   if (/infinity|rooftop|ocean|bay|skyline|sunset|pool|hot-tub|king-bed|floor-to-ceiling|balcony/.test(p.sellingPoints.join(' '))) s += 6
-  for (const f of p.faults) { if (COVER_KILLERS.has(f)) s -= 30; else if (BAD_FAULTS.has(f)) s -= 12 }
+  for (const f of p.faults) { if (COVER_KILLERS.has(f)) s -= 30; else if (BAD_FAULTS.has(f)) s -= 12; else if (f === EDGE) s -= 8 }
   return Math.max(0, Math.round(s))
 }
 /** The engine's best four seats after `taken` (cover + any fixed seats), with a reason each. */
-export function pickShowcase(pool: PhotoFacts[], taken: PhotoFacts[], seats: number, studio = false): { p: PhotoFacts; why: string; score: number }[] {
+export function pickShowcase(pool: PhotoFacts[], taken: PhotoFacts[], seats: number, studio = false, sibs?: SiblingOpening[]): { p: PhotoFacts; why: string; score: number }[] {
   const rooms = new Set(taken.map(t => rk(t.room)))
   const types = new Map<SpaceType, number>()
   for (const t of taken) { const k = spaceType(t, studio); types.set(k, (types.get(k) || 0) + 1) }
@@ -286,12 +391,23 @@ export function pickShowcase(pool: PhotoFacts[], taken: PhotoFacts[], seats: num
       if (used.has(p._id) || rooms.has(rk(p.room))) continue
       const t = spaceType(p, studio)
       const seen = types.get(t) || 0
-      const sc = showcaseScore(p) + (seen ? -10 * seen : SPACE_BONUS[t])
+      const sc = showcaseScore(p) + (seen ? -10 * seen : t === 'bath' && featureBath(p) ? 4 : SPACE_BONUS[t]) - showcaseCrowding(p, sibs)
       if (sc > 0 && (!best || sc > best.score)) best = { p, score: sc, t }
     }
     if (!best) break
     used.add(best.p._id); rooms.add(rk(best.p.room)); types.set(best.t, (types.get(best.t) || 0) + 1)
     out.push({ p: best.p, score: best.score, why: `best photo for ${SPACE_LABEL[best.t]} — ${best.p.subject || best.p.category}${best.p.shotType === 'wide' ? ', wide' : ''} · quality ${best.p.quality}` })
+  }
+  // THE FIRST SWIPE DIFFERS TOO. When most sister units put the same scene second, the best of this
+  // unit's other picks takes the second seat, as long as it is about as strong (within 10 points).
+  const live = (sibs || []).filter(s => s.five.length > 1)
+  if (out.length > 1 && live.length >= 2) {
+    const second = (scene: string) => live.filter(s => s.five[1].scene && s.five[1].scene === scene).length
+    const lead = out[0], crowd = second(sceneOf(lead.p))
+    if (crowd / live.length > 0.5) {
+      const alt = out.slice(1).filter(x => lead.score - x.score <= 10 && second(sceneOf(x.p)) < crowd).sort((a, b) => second(sceneOf(a.p)) - second(sceneOf(b.p)) || b.score - a.score)[0]
+      if (alt) { out.splice(out.indexOf(alt), 1); out.unshift({ ...alt, why: alt.why + ` · second here because ${crowd} of ${live.length} sister units show ${sceneWords(sceneOf(lead.p))} second` }) }
+    }
   }
   return out
 }
@@ -304,10 +420,15 @@ export type BuildOpts = {
   /** Positions 2–5 chosen by the host, in order. The engine fills any seat left empty (Jon,
    *  2026-09-08: "allow me to organize the first five photos, which I would call your cover photos"). */
   showcase?: string[]
+  /** The sister units' openings (same building). The engine keeps this unit's opening distinct from them. */
+  siblings?: SiblingOpening[]
+  /** The `heroId` passed in was chosen by the engine a step earlier (not by a person), so its reason says so. */
+  enginePicked?: boolean
 }
 export function buildOrder(facts: PhotoFacts[], heroId: string | null, profile: UnitProfile, opts: BuildOpts = {}): { placed: Placed[]; heroCandidates: HeroCandidate[]; sections: { slot: Slot; label: string; ids: string[] }[] } {
   const byId = new Map(facts.map(p => [p._id, p]))
-  const heroCandidates = rankHeroes(facts)
+  const sibs = opts.siblings && opts.siblings.length ? opts.siblings : undefined
+  const heroCandidates = rankHeroes(facts, 4, sibs)
   const hero = (heroId && byId.get(heroId)) || (heroCandidates[0] && byId.get(heroCandidates[0]._id)) || facts[0]
   const used = new Set<string>([hero._id])
   const placed: Placed[] = []
@@ -321,7 +442,19 @@ export function buildOrder(facts: PhotoFacts[], heroId: string | null, profile: 
     return o.quality >= p.quality - 5 ? o : null
   }
 
-  push(hero, { slot: 'cover', group: 'Cover', why: heroId ? 'your cover photo' : `engine pick — ${heroCandidates[0]?.why || 'strongest wide shot'}` })
+  // When the sister units changed the pick, the reason says so.
+  const byEngine = !heroId || !!opts.enginePicked
+  let coverWhy = byEngine ? `engine pick — ${heroCandidates.find(c => c._id === hero._id)?.why || heroCandidates[0]?.why || 'strongest wide shot'}` : 'your cover photo'
+  if (sibs && byEngine) {
+    const alone = rankHeroes(facts, 1)[0], lone = alone && byId.get(alone._id)
+    if (lone && lone._id !== hero._id) {
+      const r = siblingRead(lone, sibs)
+      const because = r.sameCover.length ? `${r.sameCover.slice(0, 2).join(' and ')}${r.sameCover.length > 2 ? ` and ${r.sameCover.length - 2} more` : ''} already ${r.sameCover.length === 1 ? 'uses' : 'use'} the top-scoring photo as ${r.sameCover.length === 1 ? 'its' : 'their'} cover`
+        : r.sceneCover ? `${r.sceneCover} of ${r.n} sister units already open with ${sceneWords(r.scene)}` : 'the top-scoring photo is one every unit in the building shows'
+      coverWhy += ` · distinct from the building: ${because}`
+    }
+  }
+  push(hero, { slot: 'cover', group: 'Cover', why: coverWhy })
 
   // ── SHOWCASE: one seat per space, wide shots only, best quality first. The hero's own room is
   // skipped so the first five are five different spaces.
@@ -340,7 +473,7 @@ export function buildOrder(facts: PhotoFacts[], heroId: string | null, profile: 
   }
   // The engine fills what the host left: the best remaining photos that still tour the home.
   const fixed = placed.map(x => byId.get(x._id) as PhotoFacts).filter(Boolean)
-  for (const pick of pickShowcase(pool.filter(p => !sameSpace(p)), fixed, seatsWanted - (placed.length - 1), profile.isStudio)) {
+  for (const pick of pickShowcase(pool.filter(p => !sameSpace(p)), fixed, seatsWanted - (placed.length - 1), profile.isStudio, sibs)) {
     used.add(pick.p._id); takenRooms.add(rk(pick.p.room))
     push(pick.p, { slot: 'showcase', group: 'Showcase', why: 'showcase — ' + pick.why })
   }
@@ -402,7 +535,7 @@ export type Check = { key: string; ok: boolean | null; label: string; detail: st
  * THE MARKETING CHECK — does this set do the two jobs? Pass/fail per rule, in guest-facing words,
  * so the operator sees WHY the score is what it is and what to shoot or cut next.
  */
-export function marketingChecks(placed: Placed[], profile: UnitProfile): Check[] {
+export function marketingChecks(placed: Placed[], profile: UnitProfile, siblings?: SiblingOpening[]): Check[] {
   const out: Check[] = []
   const cover = placed[0]
   const property = placed.filter(p => p.kind === 'property')
@@ -418,6 +551,19 @@ export function marketingChecks(placed: Placed[], profile: UnitProfile): Check[]
   // 2. First five answer the five questions
   const rooms5 = new Set(showcase.map(p => rk(p.room)))
   out.push({ key: 'five', ok: showcase.length >= 4 && rooms5.size === showcase.length, label: 'First five show five different spaces', detail: showcase.length < 4 ? `Only ${showcase.length + 1} strong wide shots for the opening swipe — shoot the missing spaces wide and bright.` : `${showcase.map(p => p.placement.why.replace(/^showcase — (best photo for )?/, '').replace(/^your pick — /, '').replace(/ · quality \d+$/, '')).join(' · ')}` })
+  // 2b. Distinct from the sister units (only when the building has other listings).
+  const sibs = (siblings || []).filter(s => s.five.length)
+  if (sibs.length && cover) {
+    const r = siblingRead(cover, sibs)
+    const five = placed.slice(0, 5)
+    const twin = sibs.map(s => ({ name: s.name, n: five.filter(p => s.five.some(x => sameShot(p.hash, x.hash))).length })).sort((a, b) => b.n - a.n)[0]
+    const crowded = sibs.length >= 3 && (r.sceneCover + 1) / (r.n + 1) > 0.5
+    const ok = !r.sameCover.length && !crowded && !(twin && twin.n >= 3)
+    out.push({ key: 'distinct', ok, label: 'Opens differently from its sister units', detail: r.sameCover.length ? `Same cover photo as ${r.sameCover.slice(0, 3).join(', ')}${r.sameCover.length > 3 ? ` and ${r.sameCover.length - 3} more` : ''} — in search the units read as one listing repeated.`
+      : crowded ? `${r.sceneCover + 1} of the building's ${r.n + 1} listings open with ${sceneWords(r.scene)} — lead this one with its own room or view.`
+      : twin && twin.n >= 3 ? `${twin.n} of the first five are the same photos as ${twin.name}'s first five.`
+      : `Cover and first five differ from the ${sibs.length} sister unit${sibs.length === 1 ? '' : 's'}.` })
+  }
   // 3. Every bed is shown
   const beds = profile.isStudio ? 1 : (profile.bedrooms ?? 1)
   const bedRooms = new Set(property.filter(p => /^bedroom/.test(rk(p.room)) && p.placement.slot !== 'demoted').map(p => rk(p.room)))

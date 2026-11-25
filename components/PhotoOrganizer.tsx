@@ -1,6 +1,6 @@
 'use client'
 import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
-import { buildOrder as engineOrder, showcaseScore, spaceType, SPACE_LABEL, type PhotoFacts } from '@/lib/photo-order'
+import { buildOrder as engineOrder, showcaseScore, spaceType, SPACE_LABEL, type PhotoFacts, type SiblingOpening } from '@/lib/photo-order'
 import { Images, Wand2, Sparkles, AlertTriangle, Check, RotateCcw, UploadCloud, Star, ArrowUp, ArrowDown, Crown, Gauge, Trash2, MapPinned, Sun, ImagePlus, Archive, RefreshCw, Loader2, GripVertical, ChevronsUp, ChevronsDown, CornerLeftUp, X, LibraryBig } from 'lucide-react'
 import { LibraryPicker, type LibraryPick } from '@/components/LibraryPicker'
 import { WATERMARK_PUSH_BLOCK, looksWatermarked } from '@/lib/photo-watermark'
@@ -16,6 +16,8 @@ type Photo = {
   // 2026-09-08 (v2): facts from the analyst + where the engine put the photo and why.
   subject?: string; shotType?: 'wide' | 'medium' | 'detail'; quality?: number; faults?: string[]; sellingPoints?: string[]; duplicateOf?: string | null; heroWorthy?: boolean
   placement?: { slot: 'cover' | 'showcase' | 'tour' | 'building' | 'demoted'; group: string; why: string; flag?: 'duplicate' | 'fault' | 'stock' | null }
+  // 2026-11-25: what lets the engine keep sister units distinct (same photo on another unit; how unit-specific it is).
+  hash?: string; distinct?: number
 }
 type Section = { slot: 'cover' | 'showcase' | 'tour' | 'building' | 'demoted'; label: string; ids: string[] }
 type HeroCandidate = { _id: string; score: number; why: string }
@@ -44,6 +46,9 @@ type Result = {
   checks?: { key: string; ok: boolean | null; label: string; detail: string }[]
   rooms?: string[]
   roomVocab?: string[]
+  /** Sister units in the same building, and what they open with (2026-11-25). */
+  siblings?: SiblingOpening[]
+  building?: { name: string; units: number; covers: { scene: string; label: string; n: number }[] } | null
 }
 
 const CAT_COLORS: Record<string, string> = {
@@ -134,6 +139,8 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
   const [copiedTitle, setCopiedTitle] = useState<string | null>(null)
   const [profile, setProfile] = useState<Result['profile']>(undefined)
   const [checks, setChecks] = useState<NonNullable<Result['checks']>>([])
+  const [siblings, setSiblings] = useState<SiblingOpening[]>([])
+  const [bldg, setBldg] = useState<Result['building']>(null)
   // THE FIRST FIVE, in Jon's words "your cover photos". When the host arranges them, the lock holds
   // positions 1–5 exactly as chosen through every regroup; null = the engine's five.
   const [fiveLock, setFiveLock] = useState<string[] | null>(null)
@@ -210,6 +217,7 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
       setTitleHooks(Array.isArray(j.titleHooks) ? j.titleHooks : [])
       setProfile(j.profile); setRoomVocab(Array.isArray(j.roomVocab) ? j.roomVocab : [])
       setChecks(Array.isArray(j.checks) ? j.checks : [])
+      setSiblings(Array.isArray(j.siblings) ? j.siblings : []); setBldg(j.building || null)
       setFiveLock(null)
       // Duplicates, faults and stock come pre-flagged; ticking them is one click, not ten.
       setToRemove(new Set())
@@ -562,9 +570,9 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
       _id: id, url: p.url, room: p.room || p.category || 'other', category: p.category || 'other', subject: p.subject || '',
       shotType: p.shotType || 'medium', quality: typeof p.quality === 'number' ? p.quality : 50, kind: p.kind === 'stock' ? 'stock' : 'property',
       faults: p.faults || [], sellingPoints: p.sellingPoints || [], duplicateOf: p.duplicateOf || null, heroWorthy: !!p.heroWorthy,
-      caption: p.caption || '', captionSource: 'ai', enhance: p.enhance, enhanceWhy: p.enhanceWhy,
+      caption: p.caption || '', captionSource: 'ai', enhance: p.enhance, enhanceWhy: p.enhanceWhy, hash: p.hash, distinct: p.distinct,
     } })
-    const r = engineOrder(facts, (lock && lock[0]) || heroId || ids[0] || null, profile || { bedrooms: null, isStudio: false }, lock ? { showcase: lock.slice(1) } : {})
+    const r = engineOrder(facts, (lock && lock[0]) || heroId || ids[0] || null, profile || { bedrooms: null, isStudio: false }, { ...(lock ? { showcase: lock.slice(1) } : {}), siblings })
     if (lock && lock[0] && lock[0] !== heroId) setHeroId(lock[0])
     const merged: Record<string, Photo> = { ...nextPhotos }
     for (const pl of r.placed) merged[pl._id] = { ...merged[pl._id], placement: pl.placement, reason: pl.placement.why }
@@ -749,7 +757,7 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
         <div className="px-4 py-4 border-t border-line space-y-4">
           <CaptionTag listingId={listingId} />
           {order.length > 0 && mode === 'mine' && aiFive.length >= 3 && !fiveDismissed && (fiveApplied || aiFive.join(',') !== order.slice(0, aiFive.length).join(',')) && (
-            <SuggestedFive five={aiFive} current={order.slice(0, 5)} photos={photos} applied={fiveApplied} busy={busy || pushing}
+            <SuggestedFive five={aiFive} current={order.slice(0, 5)} photos={photos} applied={fiveApplied} busy={busy || pushing} building={bldg}
               onApply={() => { applyFive(aiFive); setFiveApplied(true) }}
               onUndo={() => { setOrder(proposed); setHeroId(proposed[0] || null); setFiveLock(null); setFiveApplied(false) }}
               onKeep={() => { try { localStorage.setItem('photo5.dismiss.' + listingId, aiFive.join(',')) } catch { /* fine */ } setFiveDismissed(true) }} />
@@ -1284,8 +1292,8 @@ function FiveBoard({ five, all, photos, heroCands, studio, locked, busy, onSet, 
 // THE ENGINE'S FIRST FIVE, FOR APPROVAL (Jon, 2026-10-30). Shown beside what is live now, with the
 // reason for each pick. Use them → only positions 1–5 change; Keep mine → this suggestion is not
 // offered again for the same photos.
-function SuggestedFive({ five, current, photos, applied, busy, onApply, onUndo, onKeep }: {
-  five: string[]; current: string[]; photos: Record<string, Photo>; applied: boolean; busy: boolean
+function SuggestedFive({ five, current, photos, applied, busy, building, onApply, onUndo, onKeep }: {
+  five: string[]; current: string[]; photos: Record<string, Photo>; applied: boolean; busy: boolean; building?: Result['building']
   onApply: () => void; onUndo: () => void; onKeep: () => void
 }) {
   const label = (id: string) => { const p = photos[id]; return (p?.placement?.why || p?.subject || p?.caption || '').replace(/\.$/, '') }
@@ -1311,6 +1319,9 @@ function SuggestedFive({ five, current, photos, applied, busy, onApply, onUndo, 
       <ul className="text-[11.5px] text-ink/80 space-y-0.5">
         {five.slice(0, 5).map((id, i) => label(id) ? <li key={id}><b>{i + 1}.</b> {label(id)}</li> : null)}
       </ul>
+      {building && building.units > 0 && (
+        <p className="text-[11.5px] text-amber-900">Kept distinct from the {building.units} other {building.name} listing{building.units === 1 ? '' : 's'}{building.covers.length ? ': their covers now are ' + building.covers.slice(0, 4).map(c => `${c.label} ×${c.n}`).join(', ') : ''}.</p>
+      )}
       <div className="flex items-center gap-2 flex-wrap">
         {applied
           ? <button onClick={onUndo} disabled={busy} className="text-[12.5px] font-semibold rounded-lg border border-line bg-white px-3 py-1.5 hover:bg-app">Undo</button>

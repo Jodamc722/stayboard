@@ -28,7 +28,9 @@ import { loadListingAiWithPreview } from '@/lib/listing-ai-server'
 import { captionSpec, AUTO_PRESET } from '@/lib/listing-ai'
 import { captionTagFor } from '@/lib/caption-tags'
 import { VISUAL_AMENITIES, amenityListed } from '@/lib/amenity-catalog'
-import { buildOrder, normalizeRooms, rankHeroes, heroScore, marketingChecks, titleHooks, isJunkCaption, ORDER_RULE, PLAYBOOK, type PhotoFacts, type ShotType } from '@/lib/photo-order'
+import { buildOrder, normalizeRooms, rankHeroes, heroScore, marketingChecks, titleHooks, isJunkCaption, sceneOf, sceneWords, ORDER_RULE, PLAYBOOK, type PhotoFacts, type ShotType, type SiblingOpening, type SiblingShot } from '@/lib/photo-order'
+import { rollupBuilding } from '@/lib/optimize-score'
+import sharp from 'sharp'
 import { modelFor } from '@/lib/ai-models'
 import { aiFetch } from '@/lib/ai-usage'
 
@@ -103,6 +105,58 @@ async function fetchImage(url: string): Promise<{ data: string; media: string } 
     return { data: Buffer.from(await ir.arrayBuffer()).toString('base64'), media }
   } catch { return null }
 }
+// ── THE SAME PHOTO, RECOGNISED (Jon, 2026-11-25: sister units "need to be distinct"). A 64-bit
+// difference hash: the image as 9×8 grey pixels, one bit per neighbouring pair. A re-upload, a resize
+// or a light edit of one photograph lands within a few bits; two different photographs do not. It is
+// what lets the engine see that two units lead with the SAME pool shot even though each has its own file.
+async function dhash(buf: Buffer): Promise<string | undefined> {
+  try {
+    const px = await sharp(buf).greyscale().resize(9, 8, { fit: 'fill' }).raw().toBuffer()
+    let hex = ''
+    for (let y = 0; y < 8; y++) { let byte = 0; for (let x = 0; x < 8; x++) byte = (byte << 1) | (px[y * 9 + x] > px[y * 9 + x + 1] ? 1 : 0); hex += byte.toString(16).padStart(2, '0') }
+    return hex
+  } catch { return undefined }
+}
+function tinyUrl(u: string): string {
+  if (u.includes('/image/upload/') && !/\/image\/upload\/[a-z]_/.test(u)) return u.replace('/image/upload/', '/image/upload/w_96,h_96,c_limit,q_auto,f_jpg/')
+  return u
+}
+const PROPOSAL_FRESH_MS = 12 * 3600_000
+const MAX_SIBLINGS = 30
+/**
+ * The sister units' openings: every other active listing in the same building, each with the hash and
+ * scene of its first five. A unit analysed in the last 12 hours and not yet pushed counts by what was
+ * PROPOSED for it, so a building run one unit after another does not hand every unit the same new cover.
+ */
+async function loadSiblings(sb: ReturnType<typeof supabaseAdmin>, listing: any): Promise<{ building: string; openings: SiblingOpening[] }> {
+  const nameOf = (l: any) => str(l?.nickname) || str(l?.title) || str(l?.id)
+  const building = rollupBuilding(str(listing.building), nameOf(listing))
+  if (!building || building === 'Unassigned') return { building: '', openings: [] }
+  try {
+    const { data: all } = await sb.from('guesty_listings').select('id,nickname,title,building,status').limit(1000) // deliberate cap: one row per listing
+    const ids = ((all || []) as any[]).filter(l => String(l.id) !== String(listing.id) && str(l.status).trim().toLowerCase() === 'active' && !/^\s*!/.test(nameOf(l)) && rollupBuilding(str(l.building), nameOf(l)) === building)
+      .sort((a, b) => nameOf(a).localeCompare(nameOf(b), undefined, { numeric: true })).slice(0, MAX_SIBLINGS).map(l => String(l.id))
+    if (!ids.length) return { building, openings: [] }
+    const { data: rows } = await sb.from('guesty_listings').select('id,nickname,title,p0:raw->pictures->0,p1:raw->pictures->1,p2:raw->pictures->2,p3:raw->pictures->3,p4:raw->pictures->4,idx:raw->_photoIndex,opening:raw->_photoOpening').in('id', ids)
+    const openings = await Promise.all(((rows || []) as any[]).map(async (r): Promise<SiblingOpening> => {
+      const name = nameOf(r)
+      const prop = r.opening && typeof r.opening === 'object' ? r.opening : null
+      if (prop && Array.isArray(prop.five) && prop.five.length && Date.now() - Date.parse(str(prop.at)) < PROPOSAL_FRESH_MS)
+        return { name, five: prop.five.slice(0, 5).map((x: any): SiblingShot => ({ hash: str(x?.hash) || undefined, scene: str(x?.scene) })) }
+      const idx: Record<string, any> = r.idx && typeof r.idx === 'object' ? r.idx : {}
+      const pics = [r.p0, r.p1, r.p2, r.p3, r.p4].map((x: any) => { if (typeof x === 'string') { try { return JSON.parse(x) } catch { return null } } return x }).filter(Boolean)
+      const five = await Promise.all(pics.map(async (pic: any): Promise<SiblingShot> => {
+        const it = idx[str(pic?._id)] || {}
+        let hash: string | undefined = str(it.ph) || undefined
+        if (!hash) { const u = str(pic?.thumbnail) || str(pic?.original); if (u) { try { const ir = await fetch(tinyUrl(u), { signal: AbortSignal.timeout(8000) }); if (ir.ok) hash = await dhash(Buffer.from(await ir.arrayBuffer())) } catch { /* scene only */ } } }
+        return { hash, scene: it.room ? sceneOf({ room: str(it.room), category: str(it.category) }) : '' }
+      }))
+      return { name, five }
+    }))
+    return { building, openings: openings.filter(o => o.five.length) }
+  } catch { return { building, openings: [] } }
+}
+
 async function callModel(key: string, system: string, content: any[], maxTokens: number, signal: AbortSignal): Promise<{ json: any; err: string | null }> {
   try {
     const r = await aiFetch('photos', {
@@ -162,7 +216,14 @@ export async function POST(req: NextRequest) {
 
   // ── PASS 1: facts per photo, in parallel batches. Photo numbers are GLOBAL (1..N) so the model can
   // point at a duplicate in the same batch by number.
-  const images = await Promise.all(allPics.map(p => fetchImage(p.url)))
+  const [images, sis] = await Promise.all([Promise.all(allPics.map(p => fetchImage(p.url))), loadSiblings(sb, listing)])
+  const hashes = await Promise.all(images.map(f => (f ? dhash(Buffer.from(f.data, 'base64')) : Promise.resolve(undefined))))
+  const siblings = sis.openings
+  // What the sister units open with now, in words, for the analyst.
+  const coverTally: Record<string, number> = {}
+  for (const o of siblings) { const sc = o.five[0]?.scene; if (sc) coverTally[sc] = (coverTally[sc] || 0) + 1 }
+  const coverSpread = Object.keys(coverTally).sort((a, b) => coverTally[b] - coverTally[a]).map(k => ({ scene: k, label: sceneWords(k), n: coverTally[k] }))
+  const buildingLine = siblings.length ? `\nBUILDING: ${sis.building} has ${siblings.length} other listing${siblings.length === 1 ? '' : 's'} of ours, each sold on its own.${coverSpread.length ? ' Their covers now: ' + coverSpread.slice(0, 5).map(c => `${c.label} ×${c.n}`).join(', ') + '.' : ''} This listing must not open like them: score "distinct" carefully, and treat a strong photo of THIS unit's own room or view as cover-worthy ahead of a shared space the sister units already lead with.` : ''
   const presetMenu = [AUTO_PRESET, ...cfg.enhance.presets.filter(p => p.key !== 'auto'), { key: 'none', name: 'None', when: 'Already good — leave it exactly as shot.' }].map(p => `  "${p.key}" (${p.name}) — ${p.when}`).join('\n')
   const SYS = `You are a short-term-rental photo analyst for Stay Hospitality. You are shown a batch of photos from ONE listing. Report FACTS about each photo — you are NOT choosing the order; a separate engine orders them from your facts, so accuracy per photo is what matters.
 
@@ -172,24 +233,25 @@ For EVERY photo return:
 - "subject": ≤ 8 words, what the photo literally shows ("king bed facing balcony with bay view").
 - "shotType": "wide" (shows most of a space), "medium" (part of a space), "detail" (an object).
 - "quality": 0–100 for CONVERTING BOOKINGS, judged the way a guest scanning Airbnb does: natural daylight, sharp, straight verticals, staged and clutter-free, a real sense of space, landscape framing. Be strict: a dark or tilted phone shot is 30–45; a clean bright wide interior 70–85; a professional hero-grade shot 85+. A collage, text overlay or watermark caps at 40.
-- "faults": any of ["dark","blurry","clutter","people","watermark","signage","vertical","tight","mirror-selfie","text","collage"], else []. "vertical" = portrait orientation (taller than wide) — grids crop it. "text" = any words/logos/price overlaid on the image. "collage" = several photos stitched into one frame. Be strict on these three: OTAs suppress or crop them.
+- "faults": any of ["dark","blurry","clutter","people","watermark","signage","vertical","tight","mirror-selfie","text","collage","edge-subject"], else []. "edge-subject" = the thing the photo is about (the bed, the view, the pool) sits at the left or right edge, so a square cut from the CENTRE of the frame (how Airbnb crops the search card) would lose it. "vertical" = portrait orientation (taller than wide) — grids crop it. "text" = any words/logos/price overlaid on the image. "collage" = several photos stitched into one frame. Be strict on these three: OTAs suppress or crop them.
 - "sellingPoints": 0–4 tags a guest books for that this photo PROVES: e.g. "pool","infinity-pool","rooftop","ocean-view","bay-view","city-view","balcony","king-bed","workspace","full-kitchen","kitchenette","walk-in-shower","soaking-tub","gym","washer-dryer","natural-light","smart-tv","dining-for-4". Only what is visible.
 - "duplicateOf": the photo NUMBER of a near-identical photo in this batch that is the STRONGER of the two, or null. Two angles of the same room are NOT duplicates; the same angle twice is.
 - "heroWorthy": true only if this photo could be the listing's cover — wide, bright, a space or view a guest would stop scrolling for.
+- "distinct": 0–100, how specific this photo is to THIS unit rather than to the building. 85–100 = this unit's own room with its own layout, furniture or art, or the view from its own windows or balcony. 45–65 = a room that could be any unit in the building (standard staging, no window, nothing that marks it). 10–30 = a shared space every unit in the building also shows (pool, rooftop, gym, lobby, exterior) or a generic skyline/beach. Several listings in one building are sold side by side in search; they must not open with the same frame, so this number decides which photos may lead.
 - "kind": "property" for a real photo of this home/building; "stock" for generic imagery (skyline, map, generic beach, attraction, promo graphic).
 - "caption": ${cfg.photos.captionMaxWords} words / ${cfg.photos.captionMaxChars} characters max. ${captionSpec(cfg, captionTag)}
 - "amenitiesSeen": the amenities from THIS list that the photo plainly shows — an object you can point at, not one you assume (a toaster on the counter, a crib, a BBQ grill, a desk with a chair, a smart TV, a bathtub). Use the exact spelling from the list; [] when none: ${VISUAL_AMENITIES.join(' | ')}
 - "enhance": one preset key from the menu below; "enhanceWhy": ≤ 10 words grounded in what you see.
 ${presetMenu}
 
-Return ONLY JSON: {"items":[{"n":<photo number>,"room":"…","category":"…","subject":"…","shotType":"…","quality":<0-100>,"faults":[…],"sellingPoints":[…],"duplicateOf":<number|null>,"heroWorthy":<bool>,"kind":"…","caption":"…","amenitiesSeen":[…],"enhance":"…","enhanceWhy":"…"}, …]} with ONE entry for EVERY photo number you were given.`
+Return ONLY JSON: {"items":[{"n":<photo number>,"room":"…","category":"…","subject":"…","shotType":"…","quality":<0-100>,"faults":[…],"sellingPoints":[…],"duplicateOf":<number|null>,"heroWorthy":<bool>,"distinct":<0-100>,"kind":"…","caption":"…","amenitiesSeen":[…],"enhance":"…","enhanceWhy":"…"}, …]} with ONE entry for EVERY photo number you were given.`
 
   const batches: { start: number; pics: Pic[] }[] = []
   for (let i = 0; i < allPics.length; i += BATCH) batches.push({ start: i, pics: allPics.slice(i, i + BATCH) })
   const ac = new AbortController()
   const acTimer = setTimeout(() => ac.abort(), 105_000)
   const results = await Promise.all(batches.map(async (b) => {
-    const content: any[] = [{ type: 'text', text: `Listing: ${unitLine}. Photos ${b.start + 1}–${b.start + b.pics.length} of ${allPics.length}.${guidance ? `\nHOST CORRECTION — apply exactly: ${guidance}` : ''}` }]
+    const content: any[] = [{ type: 'text', text: `Listing: ${unitLine}. Photos ${b.start + 1}–${b.start + b.pics.length} of ${allPics.length}.${buildingLine}${guidance ? `\nHOST CORRECTION — apply exactly: ${guidance}` : ''}` }]
     b.pics.forEach((p, i) => {
       const n = b.start + i + 1
       content.push({ type: 'text', text: `Photo ${n}${p.caption && !isJunkCaption(p.caption) ? ` (current caption: ${p.caption})` : ''}:` })
@@ -241,6 +303,8 @@ Return ONLY JSON: {"items":[{"n":<photo number>,"room":"…","category":"…","s
       enhance: presetKeys.has(rawPreset) ? rawPreset : cfg.enhance.fallbackPreset,
       enhanceWhy: str(it.enhanceWhy).slice(0, 90),
       amenitiesSeen: Array.isArray(it.amenitiesSeen) ? it.amenitiesSeen.map((x: any) => str(x).trim()).filter((x: string) => VISUAL_SET.has(x.toLowerCase())).map((x: string) => VISUAL_CANON[x.toLowerCase()]).slice(0, 8) : [],
+      hash: hashes[i],
+      distinct: Number.isFinite(Number(it.distinct)) && it.distinct != null ? Math.max(0, Math.min(100, Math.round(Number(it.distinct)))) : undefined,
     })
   })
 
@@ -263,19 +327,21 @@ Return ONLY JSON: {"items":[{"n":<photo number>,"room":"…","category":"…","s
   let heroId: string | null = lockedHeroId || (autoHero ? null : allPics[0]._id)
   let coverChange: { from: string; to: string; fromScore: number; toScore: number; why: string } | null = null
   if (!lockedHeroId && !autoHero) {
-    const ranked = rankHeroes(normalized, 4)
+    const ranked = rankHeroes(normalized, 4, siblings)
     const cur = normalized.find(f => f._id === allPics[0]._id)
-    const curScore = cur ? heroScore(cur) : 0
+    const curScore = cur ? heroScore(cur, siblings) : 0
     if (ranked[0] && ranked[0]._id !== allPics[0]._id && ranked[0].score >= curScore + 8) {
       heroId = ranked[0]._id
       coverChange = { from: allPics[0]._id, to: ranked[0]._id, fromScore: curScore, toScore: ranked[0].score, why: ranked[0].why }
     }
   }
-  const { placed, heroCandidates, sections } = buildOrder(normalized, heroId, profile)
+  const { placed, heroCandidates, sections } = buildOrder(normalized, heroId, profile, { siblings, enginePicked: !!coverChange || autoHero })
+  // When the sister units are why the cover changed, the change says so.
+  if (coverChange && placed[0] && / · distinct from the building: /.test(placed[0].placement.why)) coverChange.why += ' · ' + placed[0].placement.why.split(' · distinct from the building: ')[1]
   const proposedOrder = placed.map(p => p._id)
   const hooks = titleHooks(normalized)
   const recommendRemove = placed.filter(p => p.placement.slot === 'demoted').map(p => ({ _id: p._id, reason: p.placement.why }))
-  const checks = marketingChecks(placed, profile)
+  const checks = marketingChecks(placed, profile, siblings)
 
   // Whole-set assessment from the facts — no second model call needed for the number.
   const property = normalized.filter(f => f.kind === 'property')
@@ -325,17 +391,17 @@ Return ONLY JSON: {"items":[{"n":<photo number>,"room":"…","category":"…","s
     const photoIndex: Record<string, any> = {}
     for (const f of normalized) {
       const human = prevIndex[f._id] && prevIndex[f._id].by === 'human' ? prevIndex[f._id] : null
-      photoIndex[f._id] = { room: f.room, category: f.category, kind: f.kind, subject: f.subject, shotType: f.shotType, quality: f.quality, sellingPoints: f.sellingPoints, amenitiesSeen: (f as any).amenitiesSeen || [], caption: f.caption, enhance: f.enhance, enhanceWhy: f.enhanceWhy, at, ...(human ? { by: 'human' } : {}) }
+      photoIndex[f._id] = { room: f.room, category: f.category, kind: f.kind, subject: f.subject, shotType: f.shotType, quality: f.quality, sellingPoints: f.sellingPoints, amenitiesSeen: (f as any).amenitiesSeen || [], caption: f.caption, enhance: f.enhance, enhanceWhy: f.enhanceWhy, at, ...(f.hash ? { ph: f.hash } : {}), ...(typeof f.distinct === 'number' ? { distinct: f.distinct } : {}), ...(human ? { by: 'human' } : {}) }
     }
     const ps = { score: assessment.quality, coverageNote: assessment.coverage, notes: assessment.notes, count: allPics.length, hooks: hooks.map(h => h.hook), at }
-    await sb.from('guesty_listings').update({ raw: { ...raw, _photoIndex: photoIndex, _photoDigest: digestOf(photoIndex), _photoScore: ps, _photoAmenities: { gaps: amenityGaps, at } }, photo_score: ps }).eq('id', listingId)
+    await sb.from('guesty_listings').update({ raw: { ...raw, _photoIndex: photoIndex, _photoDigest: digestOf(photoIndex), _photoScore: ps, _photoAmenities: { gaps: amenityGaps, at }, _photoOpening: { at, five: placed.slice(0, 5).map(x => ({ hash: x.hash || '', scene: sceneOf(x) })) } }, photo_score: ps }).eq('id', listingId)
   } catch { /* best-effort */ }
 
   const mirror: Record<string, any> = (raw._photoMirror && typeof raw._photoMirror === 'object') ? raw._photoMirror : {}
   const photos = placed.map(p => ({
     _id: p._id, url: p.url, caption: p.caption, captionIsPlaceholder: isPlaceholderCaption(p.caption) || p.captionSource === 'placeholder',
     category: p.category, room: p.room, kind: p.kind, subject: p.subject, shotType: p.shotType, quality: p.quality, faults: p.faults, sellingPoints: p.sellingPoints, duplicateOf: p.duplicateOf, heroWorthy: p.heroWorthy,
-    reason: p.placement.why, placement: p.placement, enhance: p.enhance, enhanceWhy: p.enhanceWhy,
+    reason: p.placement.why, placement: p.placement, enhance: p.enhance, enhanceWhy: p.enhanceWhy, hash: p.hash, distinct: p.distinct,
     mirrorUrl: str(mirror[p._id]?.orig) || null,
   }))
 
@@ -347,6 +413,8 @@ Return ONLY JSON: {"items":[{"n":<photo number>,"room":"…","category":"…","s
     heroCandidates,
     coverChange,
     amenityGaps, listedAmenities,
+    // The sister units this opening was kept distinct from (and the browser re-groups against).
+    siblings, building: siblings.length ? { name: sis.building, units: siblings.length, covers: coverSpread } : null,
     heroSuggestion: heroCandidates[0] && heroCandidates[0]._id !== proposedOrder[0] ? { _id: heroCandidates[0]._id, why: heroCandidates[0].why } : null,
     assessment, recommendRemove,
     titleHooks: hooks, titleIdeas, checks, playbook: PLAYBOOK, profile, rooms: Array.from(new Set(normalized.map(f => f.room))).sort(), roomVocab,
