@@ -14,10 +14,10 @@
 import 'server-only'
 import { accessTokenFor, forgetToken, sendGmail } from './gmail-send'
 import { getSetting, setSetting } from './app-settings'
-import { submitInvoice } from './clean-invoices'
+import { submitInvoice, NotAnInvoice } from './clean-invoices'
 import { answerTo,
   INVOICE_ADDRESS, INVOICE_MAILBOX, REPLY_TAG, MAX_PER_DAY, EMPTY_STATE, cleanState, isTeam, isReply, addressOf, nameOf, skipReason, invoiceFiles, mediaTypeOf,
-  headline, replySubject, teamReplyHtml, outsideReplyHtml, noFileHtml,
+  headline, replySubject, teamReplyHtml, outsideReplyHtml, noFileHtml, looksLikeTimeReport, TIME_REPORT_NOTE,
   type MailHeaders, type MailPart, type MailState, type Handled, type AuditResult,
 } from './clean-invoice-mail-rules'
 
@@ -139,6 +139,8 @@ export async function scanInvoiceMail(opts: { force?: boolean; peek?: boolean; b
 
       const results: AuditResult[] = []
       for (const p of take) {
+        // A time report riding along with the invoice: named, not read (lib/clean-invoice-mail-rules).
+        if (looksLikeTimeReport(p.filename)) { results.push({ file: p.filename, note: TIME_REPORT_NOTE }); continue }
         try {
           const a = await g(`/messages/${id}/attachments/${p.attachmentId}`)
           if (!a.ok) throw new Error(`could not fetch the attachment (${a.status})`)
@@ -148,7 +150,11 @@ export async function scanInvoiceMail(opts: { force?: boolean; peek?: boolean; b
           const inv = await submitInvoice(file, 'email · ' + from)
           results.push({ file: p.filename, invoice: inv })
           rec.invoices.push(inv.id)
-        } catch (e: any) { results.push({ file: p.filename, error: String(e?.message || e).slice(0, 200) }) }
+        } catch (e: any) {
+          // Read, and it is a time report or some other document that is not an invoice: said, not an error.
+          if (e instanceof NotAnInvoice) results.push({ file: p.filename, note: e.kind === 'timesheet' ? TIME_REPORT_NOTE : String(e.message).slice(0, 200) })
+          else results.push({ file: p.filename, error: String(e?.message || e).slice(0, 200) })
+        }
       }
       rec.headline = headline(results)
       // Written down BEFORE anything is sent: a reply that fails must not cause a second audit.

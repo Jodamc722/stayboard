@@ -2,13 +2,13 @@
 //   GET                      → every invoice, newest first
 //   GET ?id=                 → one invoice with its lines, flags and unbilled cleans (+ a link to the file)
 //   POST multipart file      → upload, read, check against the cleans (edit level)
-//   POST { op, id, … }       → approve | dispute | reopen | resolve (one line) | recheck | delete
+//   POST { op, id, … }       → approve | dispute | reopen | resolve (one line) | recheck | reread | delete
 //   GET ?mail=1              → invoices by email: the address, the switch, what came in lately
 //   GET ?mail=peek           → what one pass over the mailbox would do, changing nothing (full level)
 //   POST { op: mail-on | mail-off | mail-scan }  → the switch, and one pass by hand (full level)
 import { NextRequest, NextResponse } from 'next/server'
 import { requireLevel } from '@/lib/access'
-import { listInvoices, getInvoice, saveInvoice, submitInvoice, recheckInvoice, removeInvoice, fileUrl } from '@/lib/clean-invoices'
+import { listInvoices, getInvoice, saveInvoice, submitInvoice, recheckInvoice, rereadInvoice, removeInvoice, fileUrl, NotAnInvoice } from '@/lib/clean-invoices'
 import { mailState, mailReady, setMailOn, scanInvoiceMail, INVOICE_ADDRESS, INVOICE_MAILBOX } from '@/lib/clean-invoice-mail'
 
 export const dynamic = 'force-dynamic'
@@ -62,6 +62,8 @@ export async function POST(req: NextRequest) {
     }
     const id = String(b.id || '')
     if (b.op === 'recheck') { const inv = await recheckInvoice(id); return inv ? NextResponse.json({ ok: true, invoice: inv }) : NextResponse.json({ ok: false, error: 'No such invoice.' }, { status: 404 }) }
+    // Read the stored file again (one model read): for an invoice read before its kind was known.
+    if (b.op === 'reread') { const inv = await rereadInvoice(id); return inv ? NextResponse.json({ ok: true, invoice: inv }) : NextResponse.json({ ok: false, error: 'No such invoice.' }, { status: 404 }) }
     if (b.op === 'delete') { await removeInvoice(id); return NextResponse.json({ ok: true }) }
     const inv = await getInvoice(id)
     if (!inv) return NextResponse.json({ ok: false, error: 'No such invoice.' }, { status: 404 })
@@ -81,6 +83,6 @@ export async function POST(req: NextRequest) {
     await saveInvoice(inv)
     return NextResponse.json({ ok: true, invoice: inv })
   } catch (e: any) {
-    return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 300) }, { status: 500 })
+    return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 300) }, { status: e instanceof NotAnInvoice ? 400 : 500 })
   }
 }

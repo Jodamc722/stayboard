@@ -1,4 +1,4 @@
-// INVOICES BY EMAIL — the rules, with nothing imported, so plain node can test them
+// INVOICES BY EMAIL — the rules, importing only other rules, so plain node can test them
 // (lib/__tests__/clean-invoice-mail.test.mjs). The Gmail reading and sending is lib/clean-invoice-mail.ts.
 //
 // Jon, 2026-11-23: "The cleaning invoice audit that we can submit — create a shareable / cc email
@@ -11,6 +11,8 @@
 //   - THE ADDRESS: jon+invoices@stay-hospitality.com. A plus-address lands in jon@'s own inbox with
 //     nothing to set up, and Lighthouse already reads that mailbox (lib/owner-mail does the same with
 //     jon+lighthouse@).
+
+import { VERDICT_LABEL as LABEL, isOk, isFlagged, type Verdict, type InvoiceModel } from './clean-invoice-rules'
 
 export const INVOICE_ADDRESS = 'jon+invoices@stay-hospitality.com'
 export const INVOICE_MAILBOX = 'jon@stay-hospitality.com'
@@ -101,6 +103,17 @@ export function invoiceFiles(parts: MailPart[]): { take: MailPart[]; left: numbe
   return { take: ok.slice(0, MAX_FILES_PER_MAIL), left: Math.max(0, ok.length - MAX_FILES_PER_MAIL) }
 }
 
+/**
+ * A time report sent along with an invoice (Atlantic attaches two to every invoice). It is our own
+ * payroll sheet coming back, not a bill: it is named in the reply and not read, which saves a model
+ * read a file. A name that also says "invoice" is read like any other.
+ */
+export const TIME_REPORT_NOTE = 'a time report, not an invoice, so it was not audited. The hours on the invoice are checked against Homebase directly.'
+export function looksLikeTimeReport(filename: string): boolean {
+  const f = String(filename || '').toLowerCase()
+  return /(?<![a-z])time[\s_-]*(report|sheet|card)s?(?![a-z])/.test(f) && !/invoice|(?<![a-z])inv(?![a-z])/.test(f)
+}
+
 /** The media type to read a file as, when the mail program only said "application/octet-stream". */
 export function mediaTypeOf(p: { filename: string; mimeType: string }): string {
   if (INVOICE_TYPE.test(p.mimeType)) return p.mimeType.split(';')[0].trim().toLowerCase()
@@ -113,30 +126,40 @@ export function mediaTypeOf(p: { filename: string; mimeType: string }): string {
 }
 
 // ── What the reply says ─────────────────────────────────────────────────────────────────────────
-export type Verdict = 'match' | 'date_off' | 'not_done' | 'no_clean' | 'duplicate' | 'unknown_unit'
-const LABEL: Record<Verdict, string> = { match: 'Matches a clean', date_off: 'Clean on a different day', not_done: 'Clean not finished', no_clean: 'No clean on record', duplicate: 'Billed twice', unknown_unit: 'Unit not found' }
-const FLAGGED: Verdict[] = ['date_off', 'not_done', 'no_clean', 'duplicate', 'unknown_unit']
-export type AuditLine = { n: number; date: string | null; unitText: string; unit: string | null; service: string; amount: number | null; verdict: Verdict; why: string; resolved?: unknown }
-export type AuditInvoice = { id: string; vendor: string; number: string | null; periodFrom: string | null; periodTo: string | null; invoiceDate: string | null; total: number | null; lines: AuditLine[]; unbilled: unknown[]; fileName?: string }
-export type AuditResult = { file: string; invoice?: AuditInvoice; error?: string }
+// The verdicts and which of them are flagged are lib/clean-invoice-rules.ts: one list for the page,
+// the audit and this mail. An invoice is one of two models (Jon, 2026-11-25): per clean, checked
+// against Breezeway and the checkouts, or hours, checked against Homebase.
+export type { Verdict }
+export type AuditLine = { n: number; date: string | null; unitText: string; unit: string | null; service: string; amount: number | null; verdict: Verdict; why: string; risk?: number | null; resolved?: unknown }
+export type AuditInvoice = { id: string; vendor: string; number: string | null; periodFrom: string | null; periodTo: string | null; invoiceDate: string | null; total: number | null; model?: InvoiceModel; lines: AuditLine[]; unbilled: unknown[]; fileName?: string }
+/** `note` is a file that was read and is not an invoice (a time report): said, not audited, not an error. */
+export type AuditResult = { file: string; invoice?: AuditInvoice; error?: string; note?: string }
 
 const esc = (s: unknown) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 const money = (n: number | null | undefined) => n == null ? '' : '$' + n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 const day = (s?: string | null) => s ? new Date(s.slice(0, 10) + 'T12:00:00Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' }) : ''
+/** What a flagged line puts at stake: the part in question when it is known (two extra hours), else the line's amount. */
+const atStake = (l: AuditLine) => (l.risk != null ? l.risk : l.amount) || 0
+const isHours = (inv: AuditInvoice) => inv.model === 'hours'
 
-export function tally(inv: AuditInvoice): { lines: number; matched: number; flagged: number; flaggedAmount: number; unbilled: number } {
-  const fl = inv.lines.filter(l => FLAGGED.includes(l.verdict) && !l.resolved)
-  return { lines: inv.lines.length, matched: inv.lines.filter(l => l.verdict === 'match').length, flagged: fl.length, flaggedAmount: Math.round(fl.reduce((a, l) => a + (l.amount || 0), 0) * 100) / 100, unbilled: inv.unbilled.length }
+export function tally(inv: AuditInvoice): { lines: number; matched: number; flagged: number; flaggedAmount: number; unbilled: number; unchecked: number } {
+  const fl = inv.lines.filter(l => isFlagged(l.verdict) && !l.resolved)
+  return { lines: inv.lines.length, matched: inv.lines.filter(l => isOk(l.verdict)).length, flagged: fl.length, flaggedAmount: Math.round(fl.reduce((a, l) => a + atStake(l), 0) * 100) / 100, unbilled: inv.unbilled.length, unchecked: inv.lines.filter(l => l.verdict === 'unchecked').length }
 }
 
 /** One line for the subject and the top of the mail: "3 of 41 lines do not match ($420.00)". */
 export function headline(results: AuditResult[]): string {
-  const read = results.filter(r => r.invoice).map(r => tally(r.invoice!))
-  const failed = results.filter(r => !r.invoice).length
-  if (!read.length) return failed ? 'could not be read' : 'no invoice file found'
-  const lines = read.reduce((a, t) => a + t.lines, 0), flagged = read.reduce((a, t) => a + t.flagged, 0)
+  const invs = results.filter(r => r.invoice).map(r => r.invoice!)
+  const read = invs.map(tally)
+  const failed = results.filter(r => !r.invoice && !r.note).length
+  if (!read.length) return failed ? 'could not be read' : results.some(r => r.note) ? 'no invoice in the files, only a time report' : 'no invoice file found'
+  const lines = read.reduce((a, t) => a + t.lines, 0), flagged = read.reduce((a, t) => a + t.flagged, 0), unchecked = read.reduce((a, t) => a + t.unchecked, 0)
   const amt = Math.round(read.reduce((a, t) => a + t.flaggedAmount, 0) * 100) / 100
-  const base = flagged === 0 ? `all ${lines} line${lines === 1 ? '' : 's'} match a clean` : `${flagged} of ${lines} line${lines === 1 ? '' : 's'} ${flagged === 1 ? 'does' : 'do'} not match${amt ? ' (' + money(amt) + ')' : ''}`
+  // What "match" means depends on what was billed: cleans, hours, or one of each.
+  const what = invs.every(isHours) ? 'Homebase' : invs.some(isHours) ? 'our records' : 'a clean'
+  const base = flagged === 0
+    ? (unchecked ? `nothing flagged on ${lines} line${lines === 1 ? '' : 's'}; ${unchecked} could not be checked` : `all ${lines} line${lines === 1 ? '' : 's'} match ${what}`)
+    : `${flagged} of ${lines} line${lines === 1 ? '' : 's'} ${flagged === 1 ? 'does' : 'do'} not match${amt ? ' (' + money(amt) + ')' : ''}`
   return base + (failed ? `; ${failed} file${failed === 1 ? '' : 's'} could not be read` : '')
 }
 
@@ -155,25 +178,35 @@ export function teamReplyHtml(results: AuditResult[], base: string, opts: { forO
   if (opts.forOutside) h += `<p style="${P}"><b>${esc(opts.forOutside.name || opts.forOutside.email)}</b> (${esc(opts.forOutside.email)}) emailed this to the invoice address. They were sent a short note that it was received and is being reviewed; nothing below went to them.</p>`
   h += `<p style="${P}"><b>${esc(REPLY_TAG)}: ${esc(headline(results))}.</b></p>`
   for (const r of results) {
+    if (r.note) { h += `<p style="${P}"><b>${esc(r.file)}</b>: ${esc(r.note)}</p>`; continue }
     if (!r.invoice) { h += `<p style="${P}"><b>${esc(r.file)}</b>: could not be read${r.error ? ' (' + esc(r.error) + ')' : ''}. Upload it on the Cleaning invoices page to try again.</p>`; continue }
-    const inv = r.invoice, t = tally(inv)
+    const inv = r.invoice, t = tally(inv), hours = isHours(inv)
     const period = inv.periodFrom || inv.periodTo ? `${day(inv.periodFrom)} to ${day(inv.periodTo)}` : day(inv.invoiceDate)
-    h += `<p style="${P}"><b>${esc(inv.vendor)}${inv.number ? ' #' + esc(inv.number) : ''}</b>${period ? ' · ' + esc(period) : ''}${inv.total != null ? ' · ' + money(inv.total) : ''}<br>`
-      + `${t.lines} line${t.lines === 1 ? '' : 's'} read · ${t.matched} match a clean · ${t.flagged} flagged${t.flaggedAmount ? ' (' + money(t.flaggedAmount) + ')' : ''}`
-      + (t.unbilled ? ` · ${t.unbilled} finished clean${t.unbilled === 1 ? '' : 's'} in the period not on the invoice` : '')
+    h += `<p style="${P}"><b>${esc(inv.vendor)}${inv.number ? ' #' + esc(inv.number) : ''}</b>${period ? ' · ' + esc(period) : ''}${inv.total != null ? ' · ' + money(inv.total) : ''} · ${hours ? 'billed by the hour' : 'billed per clean'}<br>`
+      + `${t.lines} line${t.lines === 1 ? '' : 's'} read · ${t.matched} ${hours ? 'match Homebase' : 'match a clean'} · ${t.flagged} flagged${t.flaggedAmount ? ' (' + money(t.flaggedAmount) + ')' : ''}`
+      + (t.unchecked ? ` · ${t.unchecked} could not be checked` : '')
+      + (t.unbilled ? (hours ? ` · ${t.unbilled} ${t.unbilled === 1 ? 'person' : 'people'} with hours in the period not on the invoice` : ` · ${t.unbilled} finished clean${t.unbilled === 1 ? '' : 's'} in the period not on the invoice`) : '')
       + `<br><a href="${esc(base)}/clean-invoices?id=${esc(inv.id)}">Open it in Lighthouse</a> to approve, dispute or clear a line.</p>`
-    const fl = inv.lines.filter(l => FLAGGED.includes(l.verdict) && !l.resolved)
+    // Flagged first; then what could not be checked, so a "nothing flagged" never hides an unchecked total.
+    const fl = inv.lines.filter(l => isFlagged(l.verdict) && !l.resolved).concat(inv.lines.filter(l => l.verdict === 'unchecked'))
     if (!fl.length) continue
-    h += `<table cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin:0 0 16px;width:100%;max-width:760px"><tr>${['#', 'Date', 'Unit on the invoice', 'Amount', 'What is wrong'].map(x => `<th style="${TH}">${x}</th>`).join('')}</tr>`
+    h += `<table cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin:0 0 16px;width:100%;max-width:760px"><tr>${(hours ? ['#', 'On the invoice', 'Hours billed', 'Amount', 'What is wrong'] : ['#', 'Date', 'Unit on the invoice', 'Amount', 'What is wrong']).map(x => `<th style="${TH}">${x}</th>`).join('')}</tr>`
     for (const l of fl.slice(0, 60)) {
-      h += `<tr><td style="${TD}">${l.n}</td><td style="${TD};white-space:nowrap">${esc(day(l.date) || 'no date')}</td><td style="${TD}">${esc(l.unitText)}${l.unit && l.unit !== l.unitText ? `<br><span style="color:#6b6a65">${esc(l.unit)}</span>` : ''}</td>`
-        + `<td style="${TD};white-space:nowrap">${esc(money(l.amount))}</td><td style="${TD}"><b>${esc(LABEL[l.verdict])}</b><br><span style="color:#6b6a65">${esc(l.why)}</span></td></tr>`
+      const name = `${esc(l.unitText)}${l.unit && l.unit !== l.unitText ? `<br><span style="color:#6b6a65">${esc(l.unit)}</span>` : ''}`
+      h += `<tr><td style="${TD}">${l.n}</td>`
+        + (hours ? `<td style="${TD}">${name}</td><td style="${TD}">${esc(l.service)}</td>` : `<td style="${TD};white-space:nowrap">${esc(day(l.date) || 'no date')}</td><td style="${TD}">${name}</td>`)
+        + `<td style="${TD};white-space:nowrap">${esc(money(l.amount))}</td><td style="${TD}"><b>${esc(LABEL[l.verdict] || l.verdict)}</b><br><span style="color:#6b6a65">${esc(l.why)}</span></td></tr>`
     }
     h += `</table>`
-    if (fl.length > 60) h += `<p style="${P}">${fl.length - 60} more flagged lines are on the page.</p>`
+    if (fl.length > 60) h += `<p style="${P}">${fl.length - 60} more lines are on the page.</p>`
   }
   if (opts.skipped) h += `<p style="${P}">${opts.skipped} more attachment${opts.skipped === 1 ? ' was' : 's were'} not read (four per email). Send ${opts.skipped === 1 ? 'it' : 'them'} in another email.</p>`
-  h += `<p style="${P};color:#6b6a65;font-size:12.5px">Only the cleans are checked, not the prices: a line matches when Breezeway shows a finished clean at that unit on that date. Nothing has been approved, disputed or paid.</p>`
+  const invs = results.filter(r => r.invoice).map(r => r.invoice!)
+  const foot: string[] = []
+  if (invs.some(i => !isHours(i))) foot.push('Per clean: a line matches when Breezeway shows a finished clean at that unit for that day, including a clean that was moved after the checkout. Prices are not checked.')
+  if (invs.some(isHours)) foot.push('By the hour: each person is checked against the hours they punched in Homebase in the worked period, overtime as the hours past 40 in a week, and the total against the rates when the fee per hour is known.')
+  foot.push('Nothing has been approved, disputed or paid.')
+  h += `<p style="${P};color:#6b6a65;font-size:12.5px">${foot.join(' ')}</p>`
   return h
 }
 
