@@ -110,6 +110,19 @@ export async function cbPostV<T = any>(version: string, endpoint: string, params
   return j as T
 }
 
+/** One DELETE on a versioned endpoint (room blocks). */
+export async function cbDeleteV<T = any>(version: string, endpoint: string, params: Record<string, string | number | boolean | undefined> = {}): Promise<T> {
+  const cfg = cloudbedsConfig()
+  const qs = new URLSearchParams()
+  if (cfg.propertyId) qs.set('propertyID', cfg.propertyId)
+  for (const [k, v] of Object.entries(params)) if (v != null && v !== '') qs.set(k, String(v))
+  const base = API_BASE.replace(/v1\.\d+$/, version)
+  const r = await fetch(`${base}/${endpoint}?${qs.toString()}`, { method: 'DELETE', headers: { accept: 'application/json', ...(await authHeaders()) }, cache: 'no-store' })
+  const j: any = await r.json().catch(() => ({}))
+  if (!r.ok || j.success === false) throw new Error(`Cloudbeds ${endpoint}: ${j.message || j.error || `HTTP ${r.status}`}`)
+  return j as T
+}
+
 /** One POST (form-encoded, as Cloudbeds expects). Used for housekeeping status write-back. */
 export async function cbPost<T = any>(endpoint: string, params: Record<string, string | number | boolean | undefined> = {}): Promise<T> {
   const cfg = cloudbedsConfig()
