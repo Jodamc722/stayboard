@@ -7,13 +7,13 @@
 // number counts up once. A number whose data started part-way through the year says "since <month>"
 // beside it — nothing on this page is estimated.
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
-import { Loader2, RefreshCw, Plus, X, Sparkles, Building2, Cpu, Users, Flag } from 'lucide-react'
+import { Loader2, RefreshCw, Sparkles } from 'lucide-react'
+import { StoryTimeline, type Ev, type TakenOff } from '@/components/StoryTimeline'
 
 type Leader = { name: string; n: number }
 type Covered = { total: number; since: string | null; monthly: number[] }
-type Ev = { id: string; date: string; title: string; note: string | null; kind: 'system' | 'property' | 'team' | 'milestone'; auto: boolean }
 type Data = {
-  ok: true; year: number; asOf: string; computedAt: string; months: string[]; partial: string[]; canEdit: boolean; timeline: Ev[]; hiddenEvents: number
+  ok: true; year: number; asOf: string; computedAt: string; months: string[]; partial: string[]; canEdit: boolean; timeline: Ev[]; takenOff?: TakenOff[]
   work: { total: number; cleans: number; departureCleans: number; maintenance: number; inspections: number; hours: number; people: number; units: number; monthly: { housekeeping: number[]; maintenance: number[]; inspection: number[] }; busiestDay: { date: string; n: number } | null; bestMonth: { month: string; n: number } | null; leaders: { housekeeping: Leader[]; maintenance: Leader[]; inspection: Leader[] } }
   guests: { stays: number; nights: number; uniqueGuests: number; partyStays: number; guestsCounted: number; avgParty: number | null; guestsEstimate: number | null; ownerStays: number; listings: number; avgNights: number; monthly: number[]; channels: Leader[]; busiestArrival: { date: string; n: number } | null }
   reviews: { total: number; avg: number | null; fiveStar: number; fiveStarShare: number | null; replied: number; monthly: number[] }
@@ -24,7 +24,6 @@ type Data = {
 const serif: React.CSSProperties = { fontFamily: "var(--font-display), 'Instrument Serif', Georgia, serif", letterSpacing: '-0.01em' }
 const fmt = (n: number) => Math.round(n).toLocaleString('en-US')
 const longDay = (ymd: string) => new Date(ymd + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })
-const medDay = (ymd: string) => new Date(ymd + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
 // Validated categorical set (dataviz validator, light surface): housekeeping · maintenance · inspection.
 const SERIES = [{ key: 'housekeeping' as const, label: 'Departure cleans', color: '#1f6fb5' }, { key: 'maintenance' as const, label: 'Maintenance', color: '#c9861a' }, { key: 'inspection' as const, label: 'Inspections', color: '#7a4fd0' }]
 
@@ -123,8 +122,6 @@ function Bars({ title, rows, color, rank = true }: { title: string; rows: Leader
   )
 }
 
-const KIND_ICON: Record<Ev['kind'], ReactNode> = { system: <Cpu size={13} />, property: <Building2 size={13} />, team: <Users size={13} />, milestone: <Flag size={13} /> }
-const KIND_LABEL: Record<Ev['kind'], string> = { system: 'System', property: 'Property', team: 'Team', milestone: 'Milestone' }
 
 /** The card to share: the year in six numbers, 4:5, ready for a post. */
 export function ShareCard({ d, heading = 'Thank you, team.', line }: { d: Data; heading?: string; line?: string }) {
@@ -149,9 +146,6 @@ export function StoryPage() {
   const [d, setD] = useState<Data | null>(null)
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
-  const [adding, setAdding] = useState(false)
-  const [f, setF] = useState({ date: '', title: '', note: '', kind: 'milestone' as Ev['kind'] })
-  const [formErr, setFormErr] = useState('')
   const load = useCallback(async (refresh = false) => {
     setBusy(true)
     try {
@@ -163,19 +157,18 @@ export function StoryPage() {
   }, [])
   useEffect(() => { load() }, [load])
   const post = async (body: Record<string, any>) => {
-    const r = await fetch('/api/history', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+    const { quiet, ...rest } = body
+    const r = await fetch('/api/history', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(rest) })
     const j = await r.json().catch(() => ({}))
     if (!r.ok || j?.ok === false) throw new Error(j?.error || `HTTP ${r.status}`)
-    await load()
+    if (!quiet) await load()
+    return j
   }
-  const add = async () => { setFormErr(''); try { await post({ action: 'event.save', ...f }); setAdding(false); setF({ date: '', title: '', note: '', kind: 'milestone' }) } catch (e: any) { setFormErr(e?.message || String(e)) } }
 
   if (err) return <div className="rounded-xl border border-rose-200 bg-rose-50 text-rose-800 px-3 py-2 text-[13px]">{err}</div>
   if (!d) return <div className="flex items-center gap-2 text-muted text-[13px] py-24 justify-center"><Loader2 size={16} className="animate-spin" /> Adding up the year…</div>
 
   const asOf = new Date(d.asOf + 'T12:00:00').toLocaleDateString('en-US', { month: 'long', day: 'numeric' })
-  const years: string[] = []
-  for (const e of d.timeline) if (years.indexOf(e.date.slice(0, 4)) < 0) years.push(e.date.slice(0, 4))
   return (
     <div className="max-w-6xl mx-auto pb-20">
       {/* ---------- hero ---------- */}
@@ -275,35 +268,7 @@ export function StoryPage() {
 
       {/* ---------- 07 the timeline ---------- */}
       <Chapter n="07" title="How we got here" line="A living timeline. It adds to itself as buildings and systems come online.">
-        <div className="flex items-center gap-2 mb-4 flex-wrap">
-          {d.canEdit ? <button onClick={() => setAdding(!adding)} className="inline-flex items-center gap-1.5 rounded-xl bg-ink text-white px-3 py-2 text-[12.5px] font-semibold">{adding ? <X size={14} /> : <Plus size={14} />} {adding ? 'Close' : 'Add a milestone'}</button> : null}
-          {d.canEdit && d.hiddenEvents ? <button onClick={() => post({ action: 'event.restore' }).catch(() => {})} className="rounded-xl border border-line bg-white px-3 py-2 text-[12.5px] font-semibold text-ink">Bring back {d.hiddenEvents} hidden</button> : null}
-        </div>
-        {adding ? (
-          <div className="rounded-2xl border border-line bg-white p-4 mb-5 grid sm:grid-cols-[160px_1fr] gap-3">
-            <input type="date" value={f.date} onChange={e => setF({ ...f, date: e.target.value })} className="rounded-xl border border-line px-3 py-2 text-[13px]" />
-            <input value={f.title} onChange={e => setF({ ...f, title: e.target.value })} placeholder="What happened — “Breezeway went live”, “Salato came online”" className="rounded-xl border border-line px-3 py-2 text-[13px]" />
-            <div className="flex gap-1.5 flex-wrap">{(Object.keys(KIND_LABEL) as Ev['kind'][]).map(k => <button key={k} type="button" onClick={() => setF({ ...f, kind: k })} className={`rounded-full border px-2.5 py-1 text-[12px] font-semibold ${f.kind === k ? 'bg-ink text-white border-ink' : 'bg-white border-line text-muted'}`}>{KIND_LABEL[k]}</button>)}</div>
-            <input value={f.note} onChange={e => setF({ ...f, note: e.target.value })} placeholder="A line about it (optional)" className="rounded-xl border border-line px-3 py-2 text-[13px]" />
-            <div className="sm:col-span-2 flex items-center gap-3"><button onClick={add} className="rounded-xl bg-emerald-600 text-white px-4 py-2 text-[13px] font-semibold">Add to the timeline</button>{formErr ? <span className="text-[12.5px] text-rose-700">{formErr}</span> : null}</div>
-          </div>
-        ) : null}
-        {!d.timeline.length ? <div className="text-[13px] text-muted">Nothing on the timeline yet.</div> : years.map(y => (
-          <div key={y} className="relative pl-6 sm:pl-28 pb-2">
-            <div className="sm:absolute sm:left-0 sm:top-0 text-[40px] leading-none text-brand-500 mb-3" style={serif}>{y}</div>
-            <ol className="relative border-l border-line ml-1 sm:ml-0">
-              {d.timeline.filter(e => e.date.slice(0, 4) === y).map(e => (
-                <li key={e.id} className="relative pl-6 pb-6 group">
-                  <span className="absolute -left-[13px] top-0.5 w-[26px] h-[26px] rounded-full bg-white border border-line inline-flex items-center justify-center text-brand-600">{KIND_ICON[e.kind]}</span>
-                  <div className="text-[11.5px] uppercase tracking-wider text-muted">{medDay(e.date)}{e.auto ? ' · from the record' : ''}</div>
-                  <div className="text-[19px] leading-snug text-ink mt-0.5" style={serif}>{e.title}</div>
-                  {e.note ? <div className="text-[13px] text-muted mt-0.5 max-w-2xl">{e.note}</div> : null}
-                  {d.canEdit ? <button onClick={() => post({ action: 'event.remove', id: e.id }).catch(() => {})} title={e.auto ? 'Hide from the timeline' : 'Remove'} className="absolute right-0 top-0 opacity-0 group-hover:opacity-100 text-muted hover:text-rose-600"><X size={14} /></button> : null}
-                </li>
-              ))}
-            </ol>
-          </div>
-        ))}
+        <StoryTimeline events={d.timeline} takenOff={d.takenOff || []} canEdit={d.canEdit} post={post} />
       </Chapter>
     </div>
   )
