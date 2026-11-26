@@ -231,12 +231,14 @@ export function StoryPage() {
       </Chapter>
 
       {/* ---------- 03 the conversation ---------- */}
-      <Chapter n="03" title="The conversation" line="Messages in Guesty and calls on the phone line.">
+      <Chapter n="03" title="Customer care" line="Messages in Guesty and calls on the phone line.">
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-          <Tile label="Guest messages" value={d.talk.guestMessages.total} since={d.talk.guestMessages.since} sub="Messages guests sent us" />
-          <Tile label="Replies from the team" value={d.talk.teamMessages.total} since={d.talk.teamMessages.since} />
+          <Tile label="Messages sent by the team" value={d.talk.teamMessages.total} since={d.talk.teamMessages.since} sub="Written by a person, to a guest" />
+          <Tile label="Messages from guests" value={d.talk.guestMessages.total} since={d.talk.guestMessages.since} />
           <Tile label="Automated messages" value={d.talk.automated.total} since={d.talk.automated.since} sub="Check-in details, reminders" />
-          <Tile label="Phone calls" value={d.talk.calls.total} since={d.talk.calls.since} sub={`${fmt(d.talk.calls.inbound)} in · ${fmt(d.talk.calls.outbound)} out`} />
+          <Tile label="Calls received" value={d.talk.calls.inbound} since={d.talk.calls.since} />
+          <Tile label="Calls made" value={d.talk.calls.outbound} since={d.talk.calls.since} />
+          <Tile label="Phone calls in all" value={d.talk.calls.total} since={d.talk.calls.since} />
           <Tile label="Hours on the phone" value={d.talk.calls.talkHours} since={d.talk.calls.since} />
           <Tile label="Welcome + care calls" value={d.talk.welcomeCalls} sub="Logged on the Calls desk" />
         </div>
