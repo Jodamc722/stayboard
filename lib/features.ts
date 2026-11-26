@@ -458,7 +458,13 @@ export const HAND_PICKED: string[] = ['garden']
 // still gated by its own API (money, Eve, approvals), so opening the page grants nothing else.
 export const EVERYONE_PAGES: string[] = ['command', 'inbox']
 /** A role's level for an everyone-page is never below full (Today's own buttons each check their own tab). */
-export function everyoneFloor(key: string, lv: Level): Level { return EVERYONE_PAGES.includes(key) && lv === 'off' ? 'full' : lv }
+// OUR STORY IS FOR EVERYONE TOO (Jon, 2026-11-26: "give everyone access"), but to READ: the floor is
+// view, so adding milestones and photos stays with whoever a role gives edit to.
+export const EVERYONE_VIEW_PAGES: string[] = ['history']
+export function everyoneFloor(key: string, lv: Level): Level {
+  if (lv !== 'off') return lv
+  return EVERYONE_PAGES.includes(key) ? 'full' : EVERYONE_VIEW_PAGES.includes(key) ? 'view' : lv
+}
 export function applyHandPicked(levels: Record<string, Level>, features?: Record<string, any> | null): Record<string, Level> {
   for (const k of HAND_PICKED) levels[k] = userOverride(features, k) ?? 'off'
   return levels
@@ -480,7 +486,7 @@ export function legacyLevels(ws: any, features?: Record<string, any> | null): Re
   for (const f of FEATURES) {
     // A per-person override still wins here, so someone can be customised before they are ever
     // assigned a role — otherwise the override would silently do nothing for legacy users.
-    out[f.key] = userOverride(features, f.key) ?? (workspaceAllows(ws, f.key) ? 'full' : 'off')   // workspaceAllows includes EVERYONE_PAGES
+    out[f.key] = userOverride(features, f.key) ?? (workspaceAllows(ws, f.key) ? 'full' : everyoneFloor(f.key, 'off'))   // workspaceAllows includes EVERYONE_PAGES
   }
   return applyHandPicked(out, features)
 }
