@@ -4,7 +4,7 @@
 // YTD stats."
 //
 // ONE SNAPSHOT of the year to date, computed from what Lighthouse already holds:
-//   the work      breezeway_tasks_sync   finished + closed tasks, by department, month, person, day
+//   the work      breezeway_tasks_sync   finished tasks, by department, month, person, day
 //   the guests    guesty_reservations    confirmed + closed stays that have checked in, nights, channels
 //   the reviews   guesty_reviews         count, average (5-scale), five-star share (per-channel rule)
 //   the talk      guesty_messages, talkroute_calls
@@ -47,7 +47,7 @@ export type YearStats = {
     busiestArrival: { date: string; n: number } | null
   }
   reviews: { total: number; avg: number | null; fiveStar: number; fiveStarShare: number | null; replied: number; monthly: number[] }
-  talk: { guestMessages: Covered; teamMessages: Covered; automated: Covered; calls: Covered & { inbound: number; outbound: number; talkHours: number }; welcomeCalls: number }
+  talk: { guestMessages: Covered; teamMessages: Covered; automated: Covered; calls: Covered & { inbound: number; answered: number; outbound: number; outboundTalked: number; talkHours: number }; welcomeCalls: number }
   care: { guestIssues: Covered & { closed: number }; claims: Covered & { paid: number; recovered: number }; lostFound: number; autoInspections: number; eveAnswers: number; eveActions: number; guidebooks: number; ownerReports: number }
 }
 
@@ -82,12 +82,14 @@ export async function computeYear(year: number): Promise<YearStats> {
 
   const [tasks, stays, reviews, calls] = await Promise.all([
     pageRows((a, b) => db.from('breezeway_tasks_sync').select('id,type_department,name,scheduled_date,total_minutes,finished_by_name,assignee_name,reference_property_id')
-      .in('status', ['finished', 'closed']).gte('scheduled_date', from).lte('scheduled_date', to).order('id').range(a, b), 60),
+      // FINISHED ONLY (2026-11-26 check): a "closed" task has no finisher and almost never a start —
+      // the office closed it out; nobody did it in the app. Counting those overstated the year by ~900.
+      .eq('status', 'finished').gte('scheduled_date', from).lte('scheduled_date', to).order('id').range(a, b), 60),
     pageRows((a, b) => db.from('guesty_reservations').select('id,check_in,nights,source,guest_id,guest_email,guest_name,listing_id,party:raw->>guestsCount')
       .in('status', ['confirmed', 'closed']).gte('check_in', from).lte('check_in', to).order('id').range(a, b), 40),
     pageRows((a, b) => db.from('guesty_reviews').select('id,rating,channel,created_at,has_reply').is('removed_at', null)
       .gte('created_at', edge(0)).lt('created_at', edge(12)).order('id').range(a, b), 20),
-    pageRows((a, b) => db.from('talkroute_calls').select('id,direction,call_at,duration').gte('call_at', edge(0)).lt('call_at', edge(12)).order('id').range(a, b), 30),
+    pageRows((a, b) => db.from('talkroute_calls').select('id,direction,call_at,duration,result').gte('call_at', edge(0)).lt('call_at', edge(12)).order('id').range(a, b), 30),
   ])
   if (tasks.truncated) partial.push('tasks'); if (stays.truncated) partial.push('stays'); if (reviews.truncated) partial.push('reviews'); if (calls.truncated) partial.push('calls')
 
@@ -142,11 +144,14 @@ export async function computeYear(year: number): Promise<YearStats> {
 
   // ---- the talk
   const callMonthly = zero()
-  let inbound = 0, outbound = 0, talkSec = 0
+  // A CALL RECORD IS NOT A CONVERSATION (Jon, 2026-11-26: "phone calls can't be right"). Talkroute logs every
+  // ring and every dial: inbound includes hang-ups and missed calls, outbound includes redials and no-answers.
+  // So the page leads with calls ANSWERED and says how many outbound calls actually connected (a minute or more).
+  let inbound = 0, outbound = 0, talkSec = 0, answered = 0, outboundTalked = 0
   for (const c of calls.rows as any[]) {
     const m = Number(new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', month: '2-digit' }).format(new Date(c.call_at))) - 1
     if (m < nMonths) callMonthly[m]++
-    if (/in/i.test(str(c.direction))) inbound++; else outbound++
+    if (/in/i.test(str(c.direction))) { inbound++; if (/answer/i.test(str(c.result))) answered++ } else { outbound++; if ((Number(c.duration) || 0) >= 60) outboundTalked++ }
     talkSec += Number(c.duration) || 0
   }
   const msgMonthly = async (sender: string) => Promise.all(zero().map((_, i) => count('guesty_messages', q => q.eq('sender', sender).gte('sent_at', edge(i)).lt('sent_at', edge(i + 1)))))
@@ -186,7 +191,7 @@ export async function computeYear(year: number): Promise<YearStats> {
     reviews: { total: reviews.rows.length, avg: rN ? Math.round(rSum / rN * 100) / 100 : null, fiveStar: five, fiveStarShare: rN ? five / rN : null, replied, monthly: revMonthly },
     talk: {
       guestMessages: covered(gm, year), teamMessages: covered(hm, year), automated: covered(sm, year),
-      calls: { ...covered(callMonthly, year), inbound, outbound, talkHours: Math.round(talkSec / 3600) }, welcomeCalls,
+      calls: { ...covered(callMonthly, year), inbound, answered, outbound, outboundTalked, talkHours: Math.round(talkSec / 3600) }, welcomeCalls,
     },
     care: {
       guestIssues: { ...covered(glitchM, year), closed: glitchClosed },

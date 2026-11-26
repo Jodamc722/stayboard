@@ -17,7 +17,7 @@ type Data = {
   work: { total: number; cleans: number; departureCleans: number; maintenance: number; inspections: number; hours: number; people: number; units: number; monthly: { housekeeping: number[]; maintenance: number[]; inspection: number[] }; busiestDay: { date: string; n: number } | null; bestMonth: { month: string; n: number } | null; leaders: { housekeeping: Leader[]; maintenance: Leader[]; inspection: Leader[] } }
   guests: { stays: number; nights: number; uniqueGuests: number; partyStays: number; guestsCounted: number; avgParty: number | null; guestsEstimate: number | null; ownerStays: number; listings: number; avgNights: number; monthly: number[]; channels: Leader[]; busiestArrival: { date: string; n: number } | null }
   reviews: { total: number; avg: number | null; fiveStar: number; fiveStarShare: number | null; replied: number; monthly: number[] }
-  talk: { guestMessages: Covered; teamMessages: Covered; automated: Covered; calls: Covered & { inbound: number; outbound: number; talkHours: number }; welcomeCalls: number }
+  talk: { guestMessages: Covered; teamMessages: Covered; automated: Covered; calls: Covered & { inbound: number; answered: number; outbound: number; outboundTalked: number; talkHours: number }; welcomeCalls: number }
   care: { guestIssues: Covered & { closed: number }; claims: Covered & { paid: number; recovered: number }; lostFound: number; autoInspections: number; eveAnswers: number; eveActions: number; guidebooks: number; ownerReports: number }
 }
 
@@ -26,7 +26,7 @@ const fmt = (n: number) => Math.round(n).toLocaleString('en-US')
 const longDay = (ymd: string) => new Date(ymd + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })
 const medDay = (ymd: string) => new Date(ymd + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
 // Validated categorical set (dataviz validator, light surface): housekeeping · maintenance · inspection.
-const SERIES = [{ key: 'housekeeping' as const, label: 'Cleans', color: '#1f6fb5' }, { key: 'maintenance' as const, label: 'Maintenance', color: '#c9861a' }, { key: 'inspection' as const, label: 'Inspections', color: '#7a4fd0' }]
+const SERIES = [{ key: 'housekeeping' as const, label: 'Housekeeping', color: '#1f6fb5' }, { key: 'maintenance' as const, label: 'Maintenance', color: '#c9861a' }, { key: 'inspection' as const, label: 'Inspections', color: '#7a4fd0' }]
 
 /** Counts up to `to` once, the first time it scrolls into view. */
 function Count({ to, prefix = '', suffix = '', decimals = 0 }: { to: number; prefix?: string; suffix?: string; decimals?: number }) {
@@ -129,7 +129,7 @@ const KIND_LABEL: Record<Ev['kind'], string> = { system: 'System', property: 'Pr
 /** The card to share: the year in six numbers, 4:5, ready for a post. */
 export function ShareCard({ d, heading = 'Thank you, team.', line }: { d: Data; heading?: string; line?: string }) {
   const rows: [string, string][] = [
-    [fmt(d.guests.stays), 'guest stays hosted'], [fmt(d.guests.nights), 'nights'], [fmt(d.work.cleans), 'cleans'],
+    [fmt(d.guests.stays), 'guest stays hosted'], [fmt(d.guests.nights), 'nights'], [fmt(d.work.departureCleans), 'departure cleans'],
     [fmt(d.work.maintenance), 'maintenance jobs'], [fmt(d.work.inspections), 'inspections'], [fmt(d.reviews.total), 'guest reviews'],
   ]
   return (
@@ -190,7 +190,7 @@ export function StoryPage() {
         </div>
         <p className="text-[16px] text-white/70 mt-5 max-w-2xl leading-relaxed">{fmt(d.work.people)} people cared for {fmt(d.work.units)} homes this year. Every number on this page is something this team finished.</p>
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-x-8 gap-y-6 mt-10 pt-8 border-t border-white/15">
-          {([['Nights hosted', d.guests.nights], ['Cleans', d.work.cleans], ['Maintenance jobs', d.work.maintenance], ['Inspections', d.work.inspections]] as [string, number][]).map(([l, v]) => (
+          {([['Nights hosted', d.guests.nights], ['Departure cleans', d.work.departureCleans], ['Maintenance jobs', d.work.maintenance], ['Inspections', d.work.inspections]] as [string, number][]).map(([l, v]) => (
             <div key={l}><div className="text-[40px] sm:text-[48px] leading-none" style={serif}><Count to={v} /></div><div className="text-[12.5px] uppercase tracking-wider text-white/60 mt-2">{l}</div></div>
           ))}
         </div>
@@ -198,10 +198,10 @@ export function StoryPage() {
       {d.partial.length ? <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 text-amber-900 px-3 py-2 text-[12.5px]">The count stopped early on {d.partial.join(', ')} — those numbers are low. Press “Through {asOf}” to recount.</div> : null}
 
       {/* ---------- 01 the work ---------- */}
-      <Chapter n="01" title="The work" line="Finished and closed tasks in Breezeway.">
+      <Chapter n="01" title="The work" line="Tasks finished in Breezeway.">
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
           <Tile label="Jobs finished" value={d.work.total} sub={d.work.bestMonth ? `Biggest month: ${d.work.bestMonth.month}, ${fmt(d.work.bestMonth.n)}` : undefined} />
-          <Tile label="Cleans" value={d.work.cleans} sub="Every housekeeping job finished" />
+          <Tile label="Housekeeping jobs" value={d.work.cleans} sub="Cleans, linen strips, trash runs, common areas" />
           <Tile label="Maintenance jobs" value={d.work.maintenance} />
           <Tile label="Inspections" value={d.work.inspections} />
           <Tile label="Departure cleans" value={d.work.departureCleans} sub="A home turned over for the next guest" />
@@ -233,12 +233,11 @@ export function StoryPage() {
       {/* ---------- 03 the conversation ---------- */}
       <Chapter n="03" title="Customer care" line="Messages in Guesty and calls on the phone line.">
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-          <Tile label="Messages sent by the team" value={d.talk.teamMessages.total} since={d.talk.teamMessages.since} sub="Written by a person, to a guest" />
+          <Tile label="Messages sent by the team" value={d.talk.teamMessages.total} since={d.talk.teamMessages.since} sub="Sent to guests in Guesty, saved replies included" />
           <Tile label="Messages from guests" value={d.talk.guestMessages.total} since={d.talk.guestMessages.since} />
           <Tile label="Automated messages" value={d.talk.automated.total} since={d.talk.automated.since} sub="Check-in details, reminders" />
-          <Tile label="Calls received" value={d.talk.calls.inbound} since={d.talk.calls.since} />
-          <Tile label="Calls made" value={d.talk.calls.outbound} since={d.talk.calls.since} />
-          <Tile label="Phone calls in all" value={d.talk.calls.total} since={d.talk.calls.since} />
+          <Tile label="Calls answered" value={d.talk.calls.answered} since={d.talk.calls.since} sub={`${fmt(d.talk.calls.inbound)} came in; the rest hung up or were missed`} />
+          <Tile label="Calls made" value={d.talk.calls.outbound} since={d.talk.calls.since} sub={`${fmt(d.talk.calls.outboundTalked)} lasted a minute or more; redials and no-answers are in the total`} />
           <Tile label="Hours on the phone" value={d.talk.calls.talkHours} since={d.talk.calls.since} />
           <Tile label="Welcome + care calls" value={d.talk.welcomeCalls} sub="Logged on the Calls desk" />
         </div>
@@ -261,7 +260,7 @@ export function StoryPage() {
       {/* ---------- 05 the people ---------- */}
       <Chapter n="05" title="The people" line="Most jobs finished this year.">
         <div className="grid lg:grid-cols-3 gap-3">
-          <Bars title="Cleans" rows={d.work.leaders.housekeeping} color={SERIES[0].color} />
+          <Bars title="Housekeeping" rows={d.work.leaders.housekeeping} color={SERIES[0].color} />
           <Bars title="Maintenance" rows={d.work.leaders.maintenance} color={SERIES[1].color} />
           <Bars title="Inspections" rows={d.work.leaders.inspection} color={SERIES[2].color} />
         </div>
