@@ -101,6 +101,9 @@ export async function computeYear(year: number): Promise<YearStats> {
   for (const t of tasks.rows as any[]) {
     const dept = str(t.type_department) as 'housekeeping' | 'maintenance' | 'inspection'
     if (!monthly[dept]) continue
+    // DEPARTURE CLEANS ONLY (Jon, 2026-11-26): a housekeeping task counts when it is the departure clean.
+    // Linen strips, trash runs and common-area rounds are not "cleans" and stay out of every number here.
+    if (dept === 'housekeeping' && !isDepartureCleanName(t.name)) continue
     const d = str(t.scheduled_date).slice(0, 10)
     monthly[dept][mi(d)]++
     byDay[d] = (byDay[d] || 0) + 1

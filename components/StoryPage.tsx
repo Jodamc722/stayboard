@@ -26,7 +26,7 @@ const fmt = (n: number) => Math.round(n).toLocaleString('en-US')
 const longDay = (ymd: string) => new Date(ymd + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })
 const medDay = (ymd: string) => new Date(ymd + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
 // Validated categorical set (dataviz validator, light surface): housekeeping · maintenance · inspection.
-const SERIES = [{ key: 'housekeeping' as const, label: 'Housekeeping', color: '#1f6fb5' }, { key: 'maintenance' as const, label: 'Maintenance', color: '#c9861a' }, { key: 'inspection' as const, label: 'Inspections', color: '#7a4fd0' }]
+const SERIES = [{ key: 'housekeeping' as const, label: 'Departure cleans', color: '#1f6fb5' }, { key: 'maintenance' as const, label: 'Maintenance', color: '#c9861a' }, { key: 'inspection' as const, label: 'Inspections', color: '#7a4fd0' }]
 
 /** Counts up to `to` once, the first time it scrolls into view. */
 function Count({ to, prefix = '', suffix = '', decimals = 0 }: { to: number; prefix?: string; suffix?: string; decimals?: number }) {
@@ -198,13 +198,12 @@ export function StoryPage() {
       {d.partial.length ? <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 text-amber-900 px-3 py-2 text-[12.5px]">The count stopped early on {d.partial.join(', ')} — those numbers are low. Press “Through {asOf}” to recount.</div> : null}
 
       {/* ---------- 01 the work ---------- */}
-      <Chapter n="01" title="The work" line="Tasks finished in Breezeway.">
+      <Chapter n="01" title="The work" line="Departure cleans, maintenance and inspections finished in Breezeway.">
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
           <Tile label="Jobs finished" value={d.work.total} sub={d.work.bestMonth ? `Biggest month: ${d.work.bestMonth.month}, ${fmt(d.work.bestMonth.n)}` : undefined} />
-          <Tile label="Housekeeping jobs" value={d.work.cleans} sub="Cleans, linen strips, trash runs, common areas" />
+          <Tile label="Departure cleans" value={d.work.cleans} sub="A home turned over for the next guest" />
           <Tile label="Maintenance jobs" value={d.work.maintenance} />
           <Tile label="Inspections" value={d.work.inspections} />
-          <Tile label="Departure cleans" value={d.work.departureCleans} sub="A home turned over for the next guest" />
           <Tile label="People who did it" value={d.work.people} sub="Everyone who finished a task" />
           <Tile label="Homes cared for" value={d.work.units} />
           <Tile label="Busiest day" value={d.work.busiestDay?.n || 0} suffix=" jobs" sub={d.work.busiestDay ? longDay(d.work.busiestDay.date) : undefined} />
@@ -260,7 +259,7 @@ export function StoryPage() {
       {/* ---------- 05 the people ---------- */}
       <Chapter n="05" title="The people" line="Most jobs finished this year.">
         <div className="grid lg:grid-cols-3 gap-3">
-          <Bars title="Housekeeping" rows={d.work.leaders.housekeeping} color={SERIES[0].color} />
+          <Bars title="Departure cleans" rows={d.work.leaders.housekeeping} color={SERIES[0].color} />
           <Bars title="Maintenance" rows={d.work.leaders.maintenance} color={SERIES[1].color} />
           <Bars title="Inspections" rows={d.work.leaders.inspection} color={SERIES[2].color} />
         </div>
