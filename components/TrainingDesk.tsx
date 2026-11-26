@@ -13,6 +13,7 @@ import { LeanHead, Pill, Tag, IconBtn, LeanList, LeanRow, LeanEmpty, LeanTabs, L
 import { Sheet } from '@/components/Sheet'
 import { ProfileSheet, OnboardSheet, PushSheet, QuizEditor, TRACKS as TRACK_OPTS } from '@/components/TeamOnboarding'
 import { HireRequests } from '@/components/HireRequests'
+import { CourseView } from '@/components/TrainingModules'
 
 type Lang = 'en' | 'es'
 type Item = {
@@ -26,7 +27,7 @@ type Assignment = { id: string; itemId: string; personKey: string; assignedBy: s
 type Candidate = { key: string; name: string; email: string | null; dept: string | null; market: string | null; source: 'user' | 'staff' }
 type OnbSum = { track: string | null; startDate: string | null; invitedAt: string | null; onboardedAt: string | null; apps: number; ack: boolean; openIssues: number }
 type Bundle = { items: Item[]; urls: Record<string, { en: string | null; es: string | null }>; people: Person[]; assignments: Assignment[]; candidates: Candidate[]; onboarding?: Record<string, OnbSum>; can: { edit: boolean; full: boolean }; me: string }
-type TabKey = 'library' | 'people' | 'mine' | 'inspections'
+type TabKey = 'course' | 'library' | 'people' | 'mine' | 'inspections'
 
 const TAGS = ['breezeway', 'housekeeping', 'maintenance', 'inspection', 'ccs', 'office', 'safety', 'lighthouse']
 const AUDIENCES = ['housekeeping', 'maintenance', 'inspection', 'supervision', 'ccs', 'office']
@@ -165,6 +166,7 @@ export function TrainingDesk() {
       <LeanTabs<TabKey>
         value={tab} onChange={setTab}
         tabs={[
+          ...(can.edit ? [{ key: 'course' as TabKey, label: lang === 'es' ? 'Curso' : 'Course' }] : []),
           { key: 'library', label: lang === 'es' ? 'Biblioteca' : 'Library', n: items.length },
           ...(can.edit ? [{ key: 'people' as TabKey, label: lang === 'es' ? 'Personas' : 'People', n: people.length }] : []),
           { key: 'mine', label: lang === 'es' ? 'Lo mío' : 'Mine', n: mine.filter(a => !a.completedAt).length },
@@ -183,6 +185,8 @@ export function TrainingDesk() {
 
       {err ? <div className="rounded-xl border border-rose-200 bg-rose-50 text-rose-800 px-3 py-2 text-[12.5px] mb-3">{err}</div> : null}
       {loading && !data ? <div className="flex items-center gap-2 text-muted text-[13px] py-10 justify-center"><Loader2 size={15} className="animate-spin" /> Loading…</div> : null}
+
+      {tab === 'course' && data && can.edit ? <CourseView items={items} lang={lang} can={can} say={say} onEditItem={(id) => { const it = itemById[id]; if (it) setEditing(it) }} onChanged={() => load(true)} /> : null}
 
       {tab === 'library' && data ? (
         <>

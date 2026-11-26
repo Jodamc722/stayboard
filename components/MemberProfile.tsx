@@ -28,6 +28,7 @@ export type Profile = {
     steps: { key: string; done: boolean; label: { en: string; es: string } }[]; percent: number; handbookVersion: string
   }
   training: TrainingRow[]
+  modules?: { id: string; title: { en: string; es: string | null }; summary: { en: string | null; es: string | null }; itemIds: string[]; done: number; total: number }[]
   schedule: { weekStart: string; market: string; pushedAt: string; days: { date: string; status: string; shift: string | null }[] }[]
   tasks: { today: Task[]; upcoming: Task[]; recent: Task[] }
   hours: { ok: boolean; error?: string; days: { date: string; hours: number; clockIn: string | null; clockOut: string | null; open: boolean }[]; thisWeek: number; lastWeek: number; last14: number }
@@ -48,7 +49,7 @@ const APPS: { key: string; label: string; how: { en: string; es: string } }[] = 
 const T = {
   en: {
     hi: 'Hi', tabs: { home: 'Home', training: 'Training', schedule: 'Schedule', work: 'Hours + tasks', inspections: 'Inspections', profile: 'Profile', record: 'Record' },
-    onboarding: 'Your onboarding', onboarded: 'Onboarded', apps: 'Set up your apps', imIn: "I'm set up", setUp: 'Set up', training: 'Training', todo: 'To do', done: 'Done',
+    onboarding: 'Your onboarding', onboarded: 'Onboarded', apps: 'Set up your apps', imIn: "I'm set up", setUp: 'Done', training: 'Training', todo: 'To do', done: 'Done',
     watch: 'Watch', markDone: 'Mark as done', takeQuiz: 'Take the quiz', quiz: 'Quiz', submit: 'Check my answers', passed: 'Passed', tryAgain: 'Not quite — the ones in red are wrong. Try again.', allRight: 'All correct. Done!',
     handbook: 'Handbook', signIntro: 'I have read the Stay Hospitality employee handbook and I agree to follow it.', typeName: 'Type your full name', sign: 'Sign', signed: 'Signed',
     due: 'Due', late: 'Late', redo: 'Redo', min: 'min', noVideo: 'The video is not ready in this language yet.', open: 'Open',
@@ -58,11 +59,11 @@ const T = {
     inspections: 'Your inspections', noInsp: 'No inspection reports shared with you yet.', report: 'Open the report', score: 'Score', pass: 'Pass',
     stats: { cleans: 'Cleans · 30 days', hours: 'Hours · this week', score: 'Inspection score', training: 'Training done' },
     profile: { name: 'Name', email: 'Email', phone: 'Phone', track: 'Role', market: 'Market', start: 'Start date', lang: 'Language' },
-    stepsLabel: 'steps',
+    stepsLabel: 'steps', module: 'Module', more: 'More training', next: 'Up next', cont: 'Continue', allDone: 'Course complete', lessons: 'lessons',
   },
   es: {
     hi: 'Hola', tabs: { home: 'Inicio', training: 'Capacitación', schedule: 'Horario', work: 'Horas + tareas', inspections: 'Inspecciones', profile: 'Perfil', record: 'Historial' },
-    onboarding: 'Tu incorporación', onboarded: 'Incorporado', apps: 'Configura tus apps', imIn: 'Ya estoy', setUp: 'Listo', training: 'Capacitación', todo: 'Por hacer', done: 'Hecho',
+    onboarding: 'Tu incorporación', onboarded: 'Incorporado', apps: 'Configura tus apps', imIn: 'Ya estoy', setUp: 'Hecho', training: 'Capacitación', todo: 'Por hacer', done: 'Hecho',
     watch: 'Ver', markDone: 'Marcar como hecho', takeQuiz: 'Hacer la prueba', quiz: 'Prueba', submit: 'Revisar mis respuestas', passed: 'Aprobada', tryAgain: 'Casi — las rojas están mal. Inténtalo otra vez.', allRight: '¡Todo correcto!',
     handbook: 'Manual', signIntro: 'He leído el manual del empleado de Stay Hospitality y acepto seguirlo.', typeName: 'Escribe tu nombre completo', sign: 'Firmar', signed: 'Firmado',
     due: 'Para', late: 'Vencido', redo: 'Repetir', min: 'min', noVideo: 'El video aún no está listo en este idioma.', open: 'Abrir',
@@ -72,7 +73,7 @@ const T = {
     inspections: 'Tus inspecciones', noInsp: 'Aún no te han compartido reportes de inspección.', report: 'Abrir el reporte', score: 'Puntaje', pass: 'Aprobado',
     stats: { cleans: 'Limpiezas · 30 días', hours: 'Horas · esta semana', score: 'Puntaje de inspección', training: 'Capacitación hecha' },
     profile: { name: 'Nombre', email: 'Correo', phone: 'Teléfono', track: 'Puesto', market: 'Mercado', start: 'Inicio', lang: 'Idioma' },
-    stepsLabel: 'pasos',
+    stepsLabel: 'pasos', module: 'Módulo', more: 'Más capacitación', next: 'Lo siguiente', cont: 'Continuar', allDone: 'Curso completo', lessons: 'lecciones',
   },
 }
 const serif: React.CSSProperties = { fontFamily: "'Iowan Old Style','Palatino Linotype',Palatino,'New York',Georgia,ui-serif,serif", letterSpacing: '-0.01em' }
@@ -99,6 +100,7 @@ export function MemberProfile({ data, lang, mode, act, onChanged, managerSlot }:
       </div>
 
       {tab === 'home' ? <>
+        <NextUp data={data} lang={lang} onGo={() => setTab('training')} />
         {!data.onboarding.onboardedAt ? <Onboarding data={data} lang={lang} onGo={() => setTab('training')} /> : null}
         <div className="grid grid-cols-2 gap-2 mt-4">
           <Stat label={t.stats.cleans} value={String(s.cleans30)} />
@@ -139,6 +141,33 @@ function Stat({ label, value, sub }: { label: string; value: string; sub?: strin
   return <Card className="px-4 py-3"><div className="text-[11px] font-semibold text-neutral-500 uppercase tracking-wide">{label}</div><div className="text-[22px] font-bold tabular-nums mt-0.5" style={serif}>{value}</div>{sub ? <div className="text-[11.5px] text-neutral-500">{sub}</div> : null}</Card>
 }
 
+/** The one next thing to do, in course order: an app not set up, then the first unfinished lesson, then the handbook. */
+function NextUp({ data, lang, onGo }: { data: Profile; lang: Lang; onGo: () => void }) {
+  const t = T[lang]
+  const finished = (i: TrainingRow) => !!i.assignment?.completedAt && (!i.quiz || !!i.quiz.passedAt)
+  const order = (data.modules || []).flatMap(m => m.itemIds)
+  const rows = data.training.slice().sort((a, b) => { const x = order.indexOf(a.id), y = order.indexOf(b.id); return (x < 0 ? 999 : x) - (y < 0 ? 999 : y) })
+  const lesson = rows.find(i => !finished(i))
+  const app = APPS.find(a => !data.onboarding.apps[a.key])
+  const modOf = lesson ? (data.modules || []).findIndex(m => m.itemIds.indexOf(lesson.id) >= 0) : -1
+  let title = '', sub = ''
+  if (app && data.migrated) { title = `${t.apps}: ${app.label}`; sub = app.how[lang] }
+  else if (lesson) { title = tx(lesson.title, lang); sub = [modOf >= 0 ? `${t.module} ${modOf + 1} · ${tx(data.modules![modOf].title, lang)}` : null, lesson.quiz && !lesson.quiz.passedAt ? t.quiz : null].filter(Boolean).join(' · ') }
+  else if (!data.onboarding.ack && data.migrated) { title = t.handbook; sub = t.signIntro }
+  if (!title) {
+    if (!data.training.length) return null
+    return <div className="mt-4 rounded-2xl bg-emerald-600 text-white px-4 py-4 flex items-center gap-3"><Check size={22} /><span className="text-[17px] font-bold" style={serif}>{t.allDone}</span></div>
+  }
+  return (
+    <button type="button" onClick={onGo} className="mt-4 w-full text-left rounded-2xl bg-neutral-900 text-white px-4 py-4 shadow-sm">
+      <span className="block text-[11px] font-bold uppercase tracking-wider text-white/60">{t.next}</span>
+      <span className="block text-[19px] font-bold leading-snug mt-0.5" style={serif}>{title}</span>
+      {sub ? <span className="block text-[12.5px] text-white/70 mt-1 leading-snug">{sub}</span> : null}
+      <span className="mt-3 inline-flex items-center gap-1.5 rounded-xl bg-white text-neutral-900 px-3.5 py-2 text-[13.5px] font-bold">{t.cont} →</span>
+    </button>
+  )
+}
+
 function Onboarding({ data, lang, onGo }: { data: Profile; lang: Lang; onGo: () => void }) {
   const t = T[lang]
   return (
@@ -148,7 +177,6 @@ function Onboarding({ data, lang, onGo }: { data: Profile; lang: Lang; onGo: () 
       <ol className="mt-3 space-y-1.5">{data.onboarding.steps.map((st, i) => (
         <li key={st.key} className="flex items-center gap-2 text-[13.5px]">{st.done ? <Check size={15} className="text-emerald-600" /> : <Circle size={15} className="text-neutral-300" />}<span className={st.done ? 'text-neutral-500' : 'text-neutral-900 font-medium'}>{i + 1}. {st.label[lang]}</span></li>
       ))}</ol>
-      <button type="button" onClick={onGo} className="mt-3 w-full rounded-xl bg-neutral-900 text-white py-2.5 text-[14px] font-semibold">{t.tabs.training}</button>
     </Card>
   )
 }
@@ -162,8 +190,15 @@ function TrainingTab({ data, lang, mode, act, onChanged }: { data: Profile; lang
     setBusy(k); setErr('')
     try { await act(body); onChanged() } catch (e: any) { setErr(e?.message || String(e)) } finally { setBusy(null) }
   }
-  const pending = data.training.filter(i => !(i.assignment?.completedAt && (!i.quiz || i.quiz.passedAt)))
-  const done = data.training.filter(i => !pending.includes(i))
+  const mods = data.modules || []
+  const [openMods, setOpenMods] = useState<string[]>([])
+  const inMods: string[] = mods.flatMap(m => m.itemIds)
+  const byId: Record<string, TrainingRow> = {}
+  for (const r of data.training) byId[r.id] = r
+  const finishedRow = (i: TrainingRow) => !!i.assignment?.completedAt && (!i.quiz || !!i.quiz.passedAt)
+  const rest = data.training.filter(i => inMods.indexOf(i.id) < 0)
+  const loose = rest.filter(i => !finishedRow(i))
+  const done = rest.filter(finishedRow)
   return (
     <div>
       <H>{t.apps}</H>
@@ -182,7 +217,26 @@ function TrainingTab({ data, lang, mode, act, onChanged }: { data: Profile; lang
         })}
       </Card>
       {err ? <p className="text-[13px] text-rose-600 mt-2 px-1">{err}</p> : null}
-      {pending.length ? <><H n={pending.length}>{t.todo}</H><ul className="space-y-2">{pending.map(i => <Item key={i.id} item={i} data={data} lang={lang} mode={mode} act={act} onChanged={onChanged} />)}</ul></> : null}
+      {mods.length ? mods.map((m, mi) => {
+        const rows = m.itemIds.map(id => byId[id]).filter(Boolean) as TrainingRow[]
+        const complete = m.total > 0 && m.done === m.total
+        const shut = complete && openMods.indexOf(m.id) < 0
+        return (
+          <section key={m.id} className="mt-5">
+            <button type="button" onClick={() => complete && setOpenMods(o => o.indexOf(m.id) >= 0 ? o.filter(x => x !== m.id) : o.concat([m.id]))} className="w-full text-left flex items-center gap-3 px-1 mb-2">
+              <span className={`shrink-0 w-9 h-9 rounded-xl inline-flex items-center justify-center text-[15px] font-bold ${complete ? 'bg-emerald-600 text-white' : 'bg-neutral-900 text-white'}`} style={serif}>{complete ? <Check size={17} /> : mi + 1}</span>
+              <span className="flex-1 min-w-0">
+                <span className="block text-[11px] font-bold uppercase tracking-wider text-neutral-500">{t.module} {mi + 1} · {m.done}/{m.total}</span>
+                <span className={`block text-[17px] font-bold leading-tight ${complete ? 'text-neutral-500' : 'text-neutral-900'}`} style={serif}>{tx(m.title, lang)}</span>
+              </span>
+              {complete ? <ChevronDown size={18} className={`text-neutral-400 transition ${shut ? '' : 'rotate-180'}`} /> : null}
+            </button>
+            {!complete ? <div className="h-1 rounded-full bg-neutral-200 mx-1 mb-2 overflow-hidden"><div className="h-full bg-emerald-500 transition-all" style={{ width: `${m.total ? (m.done / m.total) * 100 : 0}%` }} /></div> : null}
+            {!shut ? <ul className="space-y-2">{rows.map(i => <Item key={i.id} item={i} data={data} lang={lang} mode={mode} act={act} onChanged={onChanged} />)}</ul> : null}
+          </section>
+        )
+      }) : null}
+      {loose.length ? <><H n={loose.length}>{mods.length ? t.more : t.todo}</H><ul className="space-y-2">{loose.map(i => <Item key={i.id} item={i} data={data} lang={lang} mode={mode} act={act} onChanged={onChanged} />)}</ul></> : null}
 
       <H>{t.handbook}</H>
       <Card className="px-4 py-3">
@@ -249,7 +303,7 @@ function Item({ item, data, lang, mode, act, onChanged }: { item: TrainingRow; d
                 : <div className="p-5 text-center text-white/80 text-[13px]">{t.noVideo}</div>}
             </div>
           ) : null}
-          {tx(item.body, lang) ? <div className="rounded-xl bg-neutral-50 border border-neutral-200 px-4 py-3 text-[14px] text-neutral-800 whitespace-pre-wrap leading-relaxed">{tx(item.body, lang)}</div> : null}
+          {tx(item.body, lang) ? <Body text={tx(item.body, lang)} /> : null}
           {item.quiz && !item.quiz.passedAt && self ? (
             quizOpen ? (
               <div className="rounded-xl border border-neutral-200 px-3 py-3 space-y-4">
@@ -276,6 +330,27 @@ function Item({ item, data, lang, mode, act, onChanged }: { item: TrainingRow; d
         </div>
       ) : null}
     </Card></li>
+  )
+}
+
+/** A lesson's text: lines in CAPITALS become headings, "•" and "1." lines become list rows, the rest paragraphs. */
+function Body({ text }: { text: string }) {
+  const blocks = text.split(/\n\s*\n/)
+  return (
+    <div className="rounded-xl bg-neutral-50 border border-neutral-200 px-4 py-3 text-[14.5px] text-neutral-800 leading-relaxed space-y-3">
+      {blocks.map((b, bi) => (
+        <div key={bi} className="space-y-1">
+          {b.split('\n').map((line, li) => {
+            const l = line.trim()
+            if (!l) return null
+            const letters = l.replace(/[^A-Za-zÁÉÍÓÚÑáéíóúñ]/g, '')
+            if (letters.length >= 3 && letters === letters.toUpperCase() && l.length < 70) return <p key={li} className="text-[11.5px] font-bold uppercase tracking-wider text-neutral-500 pt-1">{l.replace(/^\d+\.\s*/, m => m)}</p>
+            if (/^[•\-]\s/.test(l)) return <p key={li} className="flex gap-2"><span className="text-neutral-400">•</span><span>{l.replace(/^[•\-]\s*/, '')}</span></p>
+            return <p key={li}>{l}</p>
+          })}
+        </div>
+      ))}
+    </div>
   )
 }
 

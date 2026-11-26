@@ -40,6 +40,7 @@ import { MARKETS } from './segments'
 import { sendResendEmail } from './resend-send'
 import { sendGmail } from './gmail-send'
 import { stayEmail, escHtml } from './email-layout'
+import { listModules, moduleItemIds } from './training-modules'
 import {
   listItems, playableUrls, assignmentsFor, personByKey, ensurePerson, complete as completeItem,
   type Person, type TrainingItem, type Assignment, type Lang,
@@ -145,11 +146,21 @@ function onboardingOf(r: any): Onboarding {
   }
 }
 
-/** Items on a track: the track's audience, plus every required item. Ordered as the library is. */
-export function trackItems(items: TrainingItem[], track: Track | null): TrainingItem[] {
+/** Items on a track, in course order: every lesson of every module on the track, plus required items.
+ *  No module on the track → the older rule (the track's audience + every required item). */
+export function trackItems(items: TrainingItem[], track: Track | null, modIds?: string[] | null): TrainingItem[] {
+  const active = items.filter(i => i.status === 'active')
+  if (modIds) {
+    const byId: Record<string, TrainingItem> = {}
+    for (const i of active) byId[i.id] = i
+    const out = modIds.map(id => byId[id]).filter(Boolean)
+    for (const i of active) if (i.required && out.indexOf(i) < 0) out.push(i)
+    return out
+  }
   const aud = TRACKS.find(t => t.key === track)?.audience || []
-  return items.filter(i => i.status === 'active' && (i.required || i.audience.some(a => aud.indexOf(a) >= 0)))
+  return active.filter(i => i.required || i.audience.some(a => aud.indexOf(a) >= 0))
 }
+export type ModuleRow = { id: string; title: { en: string; es: string | null }; summary: { en: string | null; es: string | null }; itemIds: string[]; done: number; total: number }
 
 // ---------------------------------------------------------------- work, hours, schedule, inspections
 type TaskRow = { id: string; date: string; unit: string; name: string; status: 'done' | 'in progress' | 'scheduled'; clean: boolean; finishedAt: string | null }
@@ -250,6 +261,7 @@ export type Profile = {
   person: { key: string; name: string; email: string | null; phone: string | null; lang: Lang; dept: string | null; market: string | null; code: string }
   onboarding: Onboarding & { trackLabel: string | null; steps: { key: 'invited' | 'apps' | 'training' | 'handbook'; done: boolean; label: { en: string; es: string } }[]; percent: number; handbookVersion: string }
   training: TrainingRow[]
+  modules: ModuleRow[]
   schedule: ScheduleWeek[]
   tasks: { today: TaskRow[]; upcoming: TaskRow[]; recent: TaskRow[] }
   hours: { ok: boolean; error?: string; days: DayHours[]; thisWeek: number; lastWeek: number; last14: number }
@@ -259,11 +271,11 @@ export type Profile = {
   activity: Activity[]
 }
 
-type TrainingPart = { migrated: boolean; ob: Onboarding; training: TrainingRow[]; steps: Profile['onboarding']['steps']; trainingDone: number; trainingTotal: number }
+type TrainingPart = { migrated: boolean; ob: Onboarding; training: TrainingRow[]; modules: ModuleRow[]; steps: Profile['onboarding']['steps']; trainingDone: number; trainingTotal: number }
 /** The onboarding + training half of a profile — cheap (no Homebase, no task scan), so progress checks can use it. */
 async function trainingPart(p: Person): Promise<TrainingPart> {
   const db = supabaseAdmin()
-  const [{ row, migrated }, items, assigned] = await Promise.all([onboardingRow(p.key), listItems(false), assignmentsFor(p.key)])
+  const [{ row, migrated }, items, assigned, mods] = await Promise.all([onboardingRow(p.key), listItems(false), assignmentsFor(p.key), listModules().catch(() => [])])
   const ob = onboardingOf(row)
   const byItem: Record<string, Assignment & { reason?: string | null; round?: number }> = {}
   if (migrated) {
@@ -274,9 +286,10 @@ async function trainingPart(p: Person): Promise<TrainingPart> {
       for (const a of assigned) byItem[a.itemId] = { ...a, reason: extra[a.itemId]?.reason ?? null, round: Number(extra[a.itemId]?.round) || 1 }
     } catch { for (const a of assigned) byItem[a.itemId] = a }
   } else for (const a of assigned) byItem[a.itemId] = a
-  const onTrack = trackItems(items, ob.track)
+  const onTrack = trackItems(items, ob.track, moduleItemIds(mods, ob.track))
   const onTrackIds = onTrack.map(i => i.id)
-  const mine = items.filter(i => byItem[i.id] || onTrackIds.indexOf(i.id) >= 0)
+  // Course order first (module by module), then anything else assigned to them.
+  const mine = onTrack.concat(items.filter(i => byItem[i.id] && onTrackIds.indexOf(i.id) < 0))
   const [urls, quizzes] = await Promise.all([playableUrls(mine), quizzesFor(mine.map(i => i.id))])
 
   let attempts: any[] = []
@@ -310,13 +323,20 @@ async function trainingPart(p: Person): Promise<TrainingPart> {
     { key: 'training' as const, done: trainingTotal > 0 && trainingDone === trainingTotal, label: { en: 'Training + quizzes', es: 'Capacitación + pruebas' } },
     { key: 'handbook' as const, done: !!ob.ack, label: { en: 'Handbook signed', es: 'Manual firmado' } },
   ]
-  return { migrated, ob, training, steps, trainingDone, trainingTotal }
+  const isDone = (t: TrainingRow) => !!t.assignment?.completedAt && (!t.quiz || !!t.quiz.passedAt)
+  const rowById: Record<string, TrainingRow> = {}
+  for (const t of training) rowById[t.id] = t
+  const modules: ModuleRow[] = mods
+    .filter(m => m.status === 'active' && (!!ob.track && m.tracks.indexOf(ob.track) >= 0 || m.itemIds.some(id => rowById[id]?.assignment)))
+    .map(m => { const ids = m.itemIds.filter(id => rowById[id]); return { id: m.id, title: m.title, summary: m.summary, itemIds: ids, done: ids.filter(id => isDone(rowById[id])).length, total: ids.length } })
+    .filter(m => m.total > 0)
+  return { migrated, ob, training, modules, steps, trainingDone, trainingTotal }
 }
 
 export async function profileFor(p: Person, opts: { manager: boolean }): Promise<Profile> {
   const db = supabaseAdmin()
   const today = ymdET()
-  const { migrated, ob, training, steps, trainingDone, trainingTotal } = await trainingPart(p)
+  const { migrated, ob, training, modules, steps, trainingDone, trainingTotal } = await trainingPart(p)
 
   // The person's work, hours, schedule and inspections, read side by side; any one failing leaves a hole, not an error.
   const [tasks, hours, schedule, insp] = await Promise.all([
@@ -349,6 +369,7 @@ export async function profileFor(p: Person, opts: { manager: boolean }): Promise
     person: { key: p.key, name: p.name, email: p.email, phone: ob.phone, lang: p.lang, dept: p.dept, market: p.market, code: p.code },
     onboarding: { ...ob, trackLabel: TRACKS.find(t => t.key === ob.track)?.label.en || null, steps, percent: Math.round(steps.filter(s => s.done).length / steps.length * 100), handbookVersion: HANDBOOK_VERSION },
     training,
+    modules,
     schedule,
     tasks: {
       today: tasks.filter(t => t.date === today),
@@ -458,7 +479,7 @@ export async function onboard(inp: { key?: string; name: string; email?: string 
   if (inp.lang) patch.lang = inp.lang === 'es' ? 'es' : 'en'
   const { error } = await db.from('training_people').update(patch).eq('key', person.key)
   if (error) return { ok: false, error: isMissing(error) ? `Run migration ${MIGRATION} in Supabase first.` : error.message }
-  const items = trackItems(await listItems(false), track)
+  const items = trackItems(await listItems(false), track, moduleItemIds(await listModules(true).catch(() => []), track))
   let assignedN = 0
   if (items.length) {
     const rows = items.map(i => ({ item_id: i.id, person_key: person.key, assigned_by: by, due_on: addDays(startDate, 7), reason: 'onboarding' }))
@@ -635,3 +656,59 @@ async function sendSchedule(p: { name: string; email: string; code: string; lang
 }
 
 export { personByKey, ymdET }
+
+// ---------------------------------------------------------------- modules: who has them, and catching people up
+export type ModuleStat = { people: number; assigned: number; finished: number; inProgress: number; notStarted: number; missing: number }
+/** Per module: the people on its tracks, how many have every lesson assigned, and how many finished them all. */
+export async function moduleStats(): Promise<Record<string, ModuleStat>> {
+  const out: Record<string, ModuleStat> = {}
+  try {
+    const db = supabaseAdmin()
+    const [mods, { data: ppl, error }, assigned] = await Promise.all([
+      listModules(true),
+      db.from('training_people').select('key,role_track,active'),
+      pageRows((a, b) => db.from('training_assignments').select('item_id,person_key,completed_at').order('id').range(a, b), 20).then(r => r.rows).catch(() => [] as any[]),
+    ])
+    if (error) return {}
+    const byPerson: Record<string, Record<string, boolean>> = {}
+    for (const a of assigned as any[]) { const k = str(a.person_key); (byPerson[k] = byPerson[k] || {})[str(a.item_id)] = !!a.completed_at }
+    for (const m of mods) {
+      const s: ModuleStat = { people: 0, assigned: 0, finished: 0, inProgress: 0, notStarted: 0, missing: 0 }
+      for (const p of ((ppl || []) as any[]).filter(x => x.active !== false && m.tracks.indexOf(x.role_track) >= 0)) {
+        s.people++
+        const mine = byPerson[str(p.key)] || {}
+        const has = m.itemIds.filter(id => id in mine)
+        if (has.length < m.itemIds.length) s.missing++
+        if (!has.length) continue
+        s.assigned++
+        const done = has.filter(id => mine[id]).length
+        if (m.itemIds.length && done === m.itemIds.length) s.finished++
+        else if (done) s.inProgress++
+        else s.notStarted++
+      }
+      out[m.id] = s
+    }
+  } catch { /* stats are a convenience */ }
+  return out
+}
+/** Give everyone on a module's tracks any of its lessons they don't have yet (new lessons, new modules). Never re-opens a finished one. */
+export async function syncModule(moduleId: string, by: string): Promise<{ ok: true; people: number; created: number } | { ok: false; error: string }> {
+  const m = (await listModules(true)).find(x => x.id === moduleId)
+  if (!m) return { ok: false, error: 'That module is not on file.' }
+  if (!m.itemIds.length) return { ok: false, error: 'This module has no lessons yet.' }
+  if (!m.tracks.length) return { ok: false, error: 'Pick at least one role for this module.' }
+  const db = supabaseAdmin()
+  const { data: ppl, error } = await db.from('training_people').select('key,role_track,active').in('role_track', m.tracks)
+  if (error) return { ok: false, error: isMissing(error) ? `Run migration ${MIGRATION} in Supabase first.` : error.message }
+  const people = ((ppl || []) as any[]).filter(p => p.active !== false)
+  const due = addDays(ymdET(), 7)
+  let created = 0
+  for (const p of people) {
+    const rows = m.itemIds.map(id => ({ item_id: id, person_key: str(p.key), assigned_by: by, due_on: due, reason: 'onboarding' }))
+    const { data } = await db.from('training_assignments').upsert(rows, { onConflict: 'item_id,person_key', ignoreDuplicates: true }).select('id')
+    const n = Array.isArray(data) ? data.length : 0
+    created += n
+    if (n) await logActivity(str(p.key), 'assigned', { module: m.id, items: n }, by)
+  }
+  return { ok: true, people: people.length, created }
+}
