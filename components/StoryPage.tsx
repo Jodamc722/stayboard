@@ -201,10 +201,10 @@ export function StoryPage() {
       <Chapter n="01" title="The work" line="Finished and closed tasks in Breezeway.">
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
           <Tile label="Jobs finished" value={d.work.total} sub={d.work.bestMonth ? `Biggest month: ${d.work.bestMonth.month}, ${fmt(d.work.bestMonth.n)}` : undefined} />
-          <Tile label="Cleans" value={d.work.cleans} sub={`${fmt(d.work.departureCleans)} were departure cleans`} />
+          <Tile label="Cleans" value={d.work.cleans} sub="Every housekeeping job finished" />
           <Tile label="Maintenance jobs" value={d.work.maintenance} />
           <Tile label="Inspections" value={d.work.inspections} />
-          <Tile label="Hours on the job" value={d.work.hours} sub="Timed in Breezeway, start to finish" />
+          <Tile label="Departure cleans" value={d.work.departureCleans} sub="A home turned over for the next guest" />
           <Tile label="People who did it" value={d.work.people} sub="Everyone who finished a task" />
           <Tile label="Homes cared for" value={d.work.units} />
           <Tile label="Busiest day" value={d.work.busiestDay?.n || 0} suffix=" jobs" sub={d.work.busiestDay ? longDay(d.work.busiestDay.date) : undefined} />
