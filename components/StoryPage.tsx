@@ -129,7 +129,7 @@ const KIND_LABEL: Record<Ev['kind'], string> = { system: 'System', property: 'Pr
 /** The card to share: the year in six numbers, 4:5, ready for a post. */
 export function ShareCard({ d, heading = 'Thank you, team.', line }: { d: Data; heading?: string; line?: string }) {
   const rows: [string, string][] = [
-    [fmt(d.guests.stays), 'guest stays hosted'], [fmt(d.guests.nights), 'nights'], [fmt(d.work.departureCleans), 'departure cleans'],
+    [fmt(d.guests.stays), 'guest stays hosted'], [fmt(d.guests.nights), 'nights booked'], [fmt(d.work.departureCleans), 'departure cleans'],
     [fmt(d.work.maintenance), 'maintenance jobs'], [fmt(d.work.inspections), 'inspections'], [fmt(d.reviews.total), 'guest reviews'],
   ]
   return (
@@ -190,7 +190,7 @@ export function StoryPage() {
         </div>
         <p className="text-[16px] text-white/70 mt-5 max-w-2xl leading-relaxed">{fmt(d.work.people)} people cared for {fmt(d.work.units)} homes this year. Every number on this page is something this team finished.</p>
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-x-8 gap-y-6 mt-10 pt-8 border-t border-white/15">
-          {([['Nights hosted', d.guests.nights], ['Departure cleans', d.work.departureCleans], ['Maintenance jobs', d.work.maintenance], ['Inspections', d.work.inspections]] as [string, number][]).map(([l, v]) => (
+          {([['Nights booked', d.guests.nights], ['Departure cleans', d.work.departureCleans], ['Maintenance jobs', d.work.maintenance], ['Inspections', d.work.inspections]] as [string, number][]).map(([l, v]) => (
             <div key={l}><div className="text-[40px] sm:text-[48px] leading-none" style={serif}><Count to={v} /></div><div className="text-[12.5px] uppercase tracking-wider text-white/60 mt-2">{l}</div></div>
           ))}
         </div>
@@ -212,10 +212,10 @@ export function StoryPage() {
       </Chapter>
 
       {/* ---------- 02 the guests ---------- */}
-      <Chapter n="02" title="The guests" line="Confirmed stays that checked in this year.">
+      <Chapter n="02" title="The guests" line="Confirmed reservations that checked in this year.">
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
           <Tile label="Guest stays" value={d.guests.stays} sub={d.guests.ownerStays ? `Plus ${fmt(d.guests.ownerStays)} owner and friends & family stays` : undefined} />
-          <Tile label="Nights hosted" value={d.guests.nights} sub={`${d.guests.avgNights} nights a stay on average`} />
+          <Tile label="Nights booked" value={d.guests.nights} sub={`${d.guests.avgNights} nights a stay on average`} />
           <Tile label="Guests who booked" value={d.guests.uniqueGuests} sub="Different people, counted once" />
           <Tile label="Busiest arrival day" value={d.guests.busiestArrival?.n || 0} suffix=" check-ins" sub={d.guests.busiestArrival ? longDay(d.guests.busiestArrival.date) : undefined} />
           <Tile label="Reviews" value={d.reviews.total} sub={`${fmt(d.reviews.replied)} answered`} />
@@ -232,9 +232,9 @@ export function StoryPage() {
       {/* ---------- 03 the conversation ---------- */}
       <Chapter n="03" title="Customer care" line="Messages in Guesty and calls on the phone line.">
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-          <Tile label="Messages sent by the team" value={d.talk.teamMessages.total} since={d.talk.teamMessages.since} sub="Sent to guests in Guesty, saved replies included" />
+          <Tile label="Messages sent by the team" value={d.talk.teamMessages.total} since={d.talk.teamMessages.since} sub="Written by a person; automated messages are counted separately" />
           <Tile label="Messages from guests" value={d.talk.guestMessages.total} since={d.talk.guestMessages.since} />
-          <Tile label="Automated messages" value={d.talk.automated.total} since={d.talk.automated.since} sub="Check-in details, reminders" />
+          <Tile label="Automated messages" value={d.talk.automated.total} since={d.talk.automated.since} sub="Booking thanks, guest-app reminders, payment notices" />
           <Tile label="Calls answered" value={d.talk.calls.answered} since={d.talk.calls.since} sub={`${fmt(d.talk.calls.inbound)} came in; the rest hung up or were missed`} />
           <Tile label="Calls made" value={d.talk.calls.outbound} since={d.talk.calls.since} sub={`${fmt(d.talk.calls.outboundTalked)} lasted a minute or more; redials and no-answers are in the total`} />
           <Tile label="Hours on the phone" value={d.talk.calls.talkHours} since={d.talk.calls.since} />

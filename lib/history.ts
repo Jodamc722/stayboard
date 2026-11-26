@@ -86,7 +86,9 @@ export async function computeYear(year: number): Promise<YearStats> {
       // the office closed it out; nobody did it in the app. Counting those overstated the year by ~900.
       .eq('status', 'finished').gte('scheduled_date', from).lte('scheduled_date', to).order('id').range(a, b), 60),
     pageRows((a, b) => db.from('guesty_reservations').select('id,check_in,nights,source,guest_id,guest_email,guest_name,listing_id,party:raw->>guestsCount')
-      .in('status', ['confirmed', 'closed']).gte('check_in', from).lte('check_in', to).order('id').range(a, b), 40),
+      // CONFIRMED ONLY (2026-11-26 check): Guesty's "closed" is a closed inquiry, not a stay — 124 of them
+      // this year, one with a payment. They were inflating stays and nights.
+      .eq('status', 'confirmed').gte('check_in', from).lte('check_in', to).order('id').range(a, b), 40),
     pageRows((a, b) => db.from('guesty_reviews').select('id,rating,channel,created_at,has_reply').is('removed_at', null)
       .gte('created_at', edge(0)).lt('created_at', edge(12)).order('id').range(a, b), 20),
     pageRows((a, b) => db.from('talkroute_calls').select('id,direction,call_at,duration,result').gte('call_at', edge(0)).lt('call_at', edge(12)).order('id').range(a, b), 30),
@@ -157,10 +159,20 @@ export async function computeYear(year: number): Promise<YearStats> {
     if (/in/i.test(str(c.direction))) { inbound++; if (/answer/i.test(str(c.result))) answered++ } else { outbound++; if ((Number(c.duration) || 0) >= 60) outboundTalked++ }
     talkSec += Number(c.duration) || 0
   }
-  const msgMonthly = async (sender: string) => Promise.all(zero().map((_, i) => count('guesty_messages', q => q.eq('sender', sender).gte('sent_at', edge(i)).lt('sent_at', edge(i + 1)))))
+  // WHO SENT IT (2026-11-26 check). sender='host' is NOT "a person": over half of it is Guesty automation
+  // (sender_name "hook": booking thanks, guest-app nudges), plus "Auto Pilot" and the payment notices sent
+  // as "Stay Hospitality". The team's number is host messages from everyone else.
+  const AUTO = '("hook","Auto Pilot","Stay Hospitality")'
+  const msgMonthly = async (who: 'guest' | 'team' | 'auto') => Promise.all(zero().map(async (_, i) => {
+    const win = (q: any) => q.gte('sent_at', edge(i)).lt('sent_at', edge(i + 1))
+    if (who === 'guest') return count('guesty_messages', q => win(q.eq('sender', 'guest')))
+    if (who === 'team') return count('guesty_messages', q => win(q.eq('sender', 'host').not('sender_name', 'in', AUTO)))
+    const [sys, hook] = await Promise.all([count('guesty_messages', q => win(q.eq('sender', 'system'))), count('guesty_messages', q => win(q.eq('sender', 'host').in('sender_name', ['hook', 'Auto Pilot', 'Stay Hospitality'])))])
+    return sys + hook
+  }))
   const tsMonthly = async (table: string, col: string, extra?: (q: any) => any) => Promise.all(zero().map((_, i) => count(table, q => (extra ? extra(q) : q).gte(col, edge(i)).lt(col, edge(i + 1)))))
   const [gm, hm, sm, glitchM, claimM, glitchClosed, lostFound, autoInsp, eveAnswers, eveActions, guidebooks, ownerReports, welcomeCalls, claimRows] = await Promise.all([
-    msgMonthly('guest'), msgMonthly('host'), msgMonthly('system'),
+    msgMonthly('guest'), msgMonthly('team'), msgMonthly('auto'),
     tsMonthly('glitches', 'created_at'), tsMonthly('claims', 'created_at', q => q.is('deleted_at', null)),
     count('glitches', q => q.gte('created_at', edge(0)).not('closed_at', 'is', null)),
     count('lost_found_items', q => q.gte('created_at', edge(0))),
