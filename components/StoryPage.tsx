@@ -15,7 +15,7 @@ type Ev = { id: string; date: string; title: string; note: string | null; kind: 
 type Data = {
   ok: true; year: number; asOf: string; computedAt: string; months: string[]; partial: string[]; canEdit: boolean; timeline: Ev[]; hiddenEvents: number
   work: { total: number; cleans: number; departureCleans: number; maintenance: number; inspections: number; hours: number; people: number; units: number; monthly: { housekeeping: number[]; maintenance: number[]; inspection: number[] }; busiestDay: { date: string; n: number } | null; bestMonth: { month: string; n: number } | null; leaders: { housekeeping: Leader[]; maintenance: Leader[]; inspection: Leader[] } }
-  guests: { stays: number; nights: number; uniqueGuests: number; ownerStays: number; listings: number; avgNights: number; monthly: number[]; channels: Leader[]; busiestArrival: { date: string; n: number } | null }
+  guests: { stays: number; nights: number; uniqueGuests: number; partyStays: number; guestsCounted: number; avgParty: number | null; guestsEstimate: number | null; ownerStays: number; listings: number; avgNights: number; monthly: number[]; channels: Leader[]; busiestArrival: { date: string; n: number } | null }
   reviews: { total: number; avg: number | null; fiveStar: number; fiveStarShare: number | null; replied: number; monthly: number[] }
   talk: { guestMessages: Covered; teamMessages: Covered; automated: Covered; calls: Covered & { inbound: number; outbound: number; talkHours: number }; welcomeCalls: number }
   care: { guestIssues: Covered & { closed: number }; claims: Covered & { paid: number; recovered: number }; lostFound: number; autoInspections: number; eveAnswers: number; eveActions: number; guidebooks: number; ownerReports: number }
@@ -222,7 +222,7 @@ export function StoryPage() {
           <Tile label="Reviews" value={d.reviews.total} sub={`${fmt(d.reviews.replied)} answered`} />
           <Tile label="Average rating" value={d.reviews.avg || 0} decimals={2} suffix=" / 5" sub="All channels, on one scale" />
           <Tile label="Five-star reviews" value={d.reviews.fiveStar} sub={d.reviews.fiveStarShare != null ? `${Math.round(d.reviews.fiveStarShare * 100)}% of rated reviews` : undefined} />
-          <Tile label="Listings with a stay" value={d.guests.listings} />
+          {d.guests.guestsEstimate ? <Tile label="Guests hosted" value={d.guests.guestsEstimate} prefix="≈ " sub={`Estimate: ${d.guests.avgParty} guests a stay, counted on ${fmt(d.guests.partyStays)} stays and applied to the rest`} /> : <Tile label="Listings with a stay" value={d.guests.listings} />}
         </div>
         <div className="grid lg:grid-cols-2 gap-3 mt-3">
           <Bars title="Where guests booked" rows={d.guests.channels} color="#1f6fb5" />

@@ -13,8 +13,9 @@
 // HONEST COVERAGE. Tasks, stays and reviews go back before January, so their year is a full year.
 // Messages, calls, guest issues and claims only started syncing part-way through — each of those
 // carries `since` (the first month with real volume) and the page prints it beside the number.
-// Nothing is estimated: party size is recorded on about a third of stays, so there is no
-// "guests hosted" figure — stays, nights and distinct guests who booked are exact.
+// One figure is an estimate and is labelled as one: GUESTS HOSTED. Party size is recorded on every
+// stay since autumn and on few before, so stays without it take the average of those that have it.
+// Stays, nights and distinct guests who booked are exact.
 //
 // The scan is ~35k slim rows; the result is cached in app_settings for three hours.
 import 'server-only'
@@ -41,7 +42,7 @@ export type YearStats = {
     leaders: { housekeeping: Leader[]; maintenance: Leader[]; inspection: Leader[] }
   }
   guests: {
-    stays: number; nights: number; uniqueGuests: number; ownerStays: number; listings: number; avgNights: number
+    stays: number; nights: number; uniqueGuests: number; partyStays: number; guestsCounted: number; avgParty: number | null; guestsEstimate: number | null; ownerStays: number; listings: number; avgNights: number
     monthly: number[]; channels: { name: string; n: number }[]
     busiestArrival: { date: string; n: number } | null
   }
@@ -82,7 +83,7 @@ export async function computeYear(year: number): Promise<YearStats> {
   const [tasks, stays, reviews, calls] = await Promise.all([
     pageRows((a, b) => db.from('breezeway_tasks_sync').select('id,type_department,name,scheduled_date,total_minutes,finished_by_name,assignee_name,reference_property_id')
       .in('status', ['finished', 'closed']).gte('scheduled_date', from).lte('scheduled_date', to).order('id').range(a, b), 60),
-    pageRows((a, b) => db.from('guesty_reservations').select('id,check_in,nights,source,guest_id,guest_email,guest_name,listing_id')
+    pageRows((a, b) => db.from('guesty_reservations').select('id,check_in,nights,source,guest_id,guest_email,guest_name,listing_id,party:raw->>guestsCount')
       .in('status', ['confirmed', 'closed']).gte('check_in', from).lte('check_in', to).order('id').range(a, b), 40),
     pageRows((a, b) => db.from('guesty_reviews').select('id,rating,channel,created_at,has_reply').is('removed_at', null)
       .gte('created_at', edge(0)).lt('created_at', edge(12)).order('id').range(a, b), 20),
@@ -113,7 +114,7 @@ export async function computeYear(year: number): Promise<YearStats> {
 
   // ---- the guests
   const stayMonthly = zero(), arrivals: Record<string, number> = {}, chan: Record<string, number> = {}, guestIds: Record<string, boolean> = {}, listings: Record<string, boolean> = {}
-  let nights = 0, guestStays = 0, ownerStays = 0
+  let nights = 0, guestStays = 0, ownerStays = 0, partyStays = 0, guestsCounted = 0
   for (const r of stays.rows as any[]) {
     if (isOwnerOrFriendsFamily(str(r.source), '', str(r.guest_name))) { ownerStays++; continue }
     guestStays++
@@ -121,6 +122,8 @@ export async function computeYear(year: number): Promise<YearStats> {
     stayMonthly[mi(d)]++
     arrivals[d] = (arrivals[d] || 0) + 1
     nights += Number(r.nights) || 0
+    const party = Number(r.party)
+    if (r.party != null && Number.isFinite(party) && party > 0) { partyStays++; guestsCounted += party }
     chan[channelOf(str(r.source))] = (chan[channelOf(str(r.source))] || 0) + 1
     const g = str(r.guest_id || r.guest_email); if (g) guestIds[g] = true
     if (r.listing_id) listings[str(r.listing_id)] = true
@@ -172,7 +175,11 @@ export async function computeYear(year: number): Promise<YearStats> {
       leaders: { housekeeping: top(lead.housekeeping, 5), maintenance: top(lead.maintenance, 5), inspection: top(lead.inspection, 5) },
     },
     guests: {
-      stays: guestStays, nights, uniqueGuests: Object.keys(guestIds).length, ownerStays, listings: Object.keys(listings).length,
+      stays: guestStays, nights, uniqueGuests: Object.keys(guestIds).length, partyStays, guestsCounted,
+      // GUESTS HOSTED is an estimate and says so: party size is on every stay since autumn and on few before,
+      // so stays without one take the average of the stays that have it.
+      avgParty: partyStays ? Math.round(guestsCounted / partyStays * 100) / 100 : null,
+      guestsEstimate: partyStays >= 500 ? Math.round((guestsCounted + (guestStays - partyStays) * (guestsCounted / partyStays)) / 100) * 100 : null, ownerStays, listings: Object.keys(listings).length,
       avgNights: guestStays ? Math.round(nights / guestStays * 10) / 10 : 0, monthly: stayMonthly,
       channels: top(chan, 6), busiestArrival: best(arrivals),
     },
