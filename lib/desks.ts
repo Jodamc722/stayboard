@@ -197,6 +197,8 @@ export const DESKS: Desk[] = [
       { to: '/revenue-app', label: 'Revenue App', hint: 'The Revenue App, where budgets and forecasting live', jump: true },
       { to: '/cleaners', label: 'Cleaners', hint: 'Each cleaner’s last 90 days: pace, same-day rate and quality', jump: true },
       // Training (Jon, 2026-10-26): how-to videos and FAQs, English and Spanish, assigned to people.
+      // Our Story (Jon, 2026-11-26): the team's year in numbers and the living timeline.
+      { to: '/history', label: 'Our Story', hint: 'The year in numbers — jobs finished, cleans, maintenance, inspections, guest stays, reviews, messages, calls — and the timeline of how we got here', jump: true },
       { to: '/training', label: 'Training', hint: 'How-to videos and FAQs for the team, in English and Spanish — assign them, see who finished', jump: true },
       // Team scoreboard (Jon, 2026-11-06: "a scoreboard for our team, a way to organize the feedback, read
       // the inspection and be able to share the inspection reports with the girls"). Gated by training.

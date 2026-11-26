@@ -195,6 +195,9 @@ export const FEATURES: Feature[] = [
   // it can be edited. Its level follows Training (the inspection scoreboard) until a role sets it
   // (LEVEL_FALLBACK), so whoever sees that board today sees this one and nobody else does.
   { key: 'scorecards',    label: 'Scorecards',        path: '/scoreboard', group: 'Money & team' },
+  // OUR STORY (Jon, 2026-11-26): "like a history page of our stats" — the team's year in numbers
+  // (work done, guests hosted, reviews, messages, calls). Read-only; follows Training until a role sets it.
+  { key: 'history',       label: 'Our Story',         path: '/history', group: 'Money & team' },
   // Labor Dashboard (2026-08-10, Jon): the live click-into view behind the daily labor email —
   // day / week / month, per person, with the exceptions leading.
   { key: 'labor-dashboard', label: 'Labor Dashboard',  path: '/labor/dashboard', group: 'Money & team' },
@@ -404,7 +407,7 @@ export type RoleDef = {
 // leadership → projects (2026-11-06): the Leadership board REPLACED Projects, so whoever could see
 // Projects sees the board until a role says otherwise.
 // scorecards → training (2026-11-20): the Scorecards page follows the inspection scoreboard's gate.
-const LEVEL_FALLBACK: Record<string, string> = { catalogs: 'ffe', linens: 'onboarding', leadership: 'projects', 'owner-onboarding': 'sales', scorecards: 'training', briefs: 'checklist' }
+const LEVEL_FALLBACK: Record<string, string> = { catalogs: 'ffe', linens: 'onboarding', leadership: 'projects', 'owner-onboarding': 'sales', scorecards: 'training', history: 'training', briefs: 'checklist' }
 export function roleLevel(role: RoleDef | null | undefined, featureKey: string): Level {
   if (!role || !role.perms || typeof role.perms !== 'object') return 'off'
   const explicit = role.perms[featureKey] ?? (LEVEL_FALLBACK[featureKey] ? role.perms[LEVEL_FALLBACK[featureKey]] : null)
