@@ -218,7 +218,10 @@ export async function computeYear(year: number): Promise<YearStats> {
 
 const TTL = 3 * 60 * 60 * 1000
 export async function yearStats(year: number, refresh = false): Promise<YearStats> {
-  const key = `history_year_${year}`
+  // Bump RULES whenever what is counted changes: a snapshot cached under the old rules must not be served
+  // (2026-11-26: the page kept showing the pre-correction numbers for three hours).
+  const RULES = 3
+  const key = `history_year_${year}_r${RULES}`
   if (!refresh) {
     const hit = await getSettingFresh<YearStats | null>(key, null).catch(() => null)
     if (hit?.ok && hit.asOf === (ymdET().slice(0, 4) === String(year) ? ymdET() : `${year}-12-31`) && Date.now() - new Date(hit.computedAt).getTime() < TTL) return hit
