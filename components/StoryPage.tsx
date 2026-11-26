@@ -184,10 +184,10 @@ export function StoryPage() {
           <span className="text-[12px] font-semibold uppercase tracking-[0.22em] text-[#cdb27f]">Our story · {d.year} so far</span>
           <button onClick={() => load(true)} disabled={busy} title="Recount the year" className="ml-auto inline-flex items-center gap-1.5 rounded-full border border-white/20 px-3 py-1 text-[12px] text-white/70 hover:text-white">{busy ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />} Through {asOf}</button>
         </div>
-        <h1 className="text-[44px] sm:text-[76px] leading-[0.98] mt-6 max-w-4xl" style={serif}>
+        <div role="heading" aria-level={1} className="text-[44px] sm:text-[76px] leading-[0.98] mt-6 max-w-4xl" style={serif}>
           <span className="text-[#e9d9b4]"><Count to={d.guests.stays} /></span> guest stays.<br />
           <span className="text-[#e9d9b4]"><Count to={d.work.total} /></span> jobs done.
-        </h1>
+        </div>
         <p className="text-[16px] text-white/70 mt-5 max-w-2xl leading-relaxed">{fmt(d.work.people)} people cared for {fmt(d.work.units)} homes this year. Every number on this page is something this team finished.</p>
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-x-8 gap-y-6 mt-10 pt-8 border-t border-white/15">
           {([['Nights hosted', d.guests.nights], ['Cleans', d.work.cleans], ['Maintenance jobs', d.work.maintenance], ['Inspections', d.work.inspections]] as [string, number][]).map(([l, v]) => (

@@ -54,11 +54,11 @@ const CHANNEL: [RegExp, string][] = [[/airbnb/i, 'Airbnb'], [/booking/i, 'Bookin
 const channelOf = (s: string) => { for (const [re, n] of CHANNEL) if (re.test(s)) return n; return 'Other' }
 const top = (m: Record<string, number>, n: number): Leader[] => Object.keys(m).map(k => ({ name: k, n: m[k] })).sort((a, b) => b.n - a.n).slice(0, n)
 const best = (m: Record<string, number>) => { const t = top(m, 1)[0]; return t ? { date: t.name, n: t.n } : null }
-/** First month whose volume is at least a fifth of the best month — where real coverage starts. */
+/** First month whose volume is at least a tenth of the best month — where real coverage starts. */
 function since(monthly: number[], year: number): string | null {
   const max = Math.max(0, ...monthly)
   if (!max) return null
-  const i = monthly.findIndex(v => v >= max / 5)
+  const i = monthly.findIndex(v => v >= max / 10)
   return i <= 0 ? null : `${MONTHS[i]} ${year}`
 }
 const covered = (monthly: number[], year: number): Covered => ({ total: monthly.reduce((s, v) => s + v, 0), since: since(monthly, year), monthly })
