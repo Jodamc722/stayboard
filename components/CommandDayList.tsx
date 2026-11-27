@@ -54,6 +54,7 @@ import { BulletinBoard } from '@/components/command/Bulletin'
 import { BULLETIN_URL } from '@/components/command/Bulletin'
 import { dueState, type Post as BoardPost } from '@/lib/bulletin'
 import { EveInboxToday, useEveInboxToday } from '@/components/EveInboxToday'
+import { TrainEve } from '@/components/TrainEve'
 import { CommandHub, ApprovalRow } from '@/components/command/Hub'
 
 type Sev = NextItem['severity']
@@ -202,6 +203,8 @@ export function CommandDayList() {
       <ClearBand d={data} dups={dups} vendorNotes={vendorNotes} backlog={backlog} onCleared={hide} onChanged={reload} />
       {/* "Eve is thinking about N things" lived here until 2026-11-10: her thoughts are a filter of
           the one Eve inbox now (/eve?tab=inbox → Would have done), and the band above carries its head. */}
+      {/* TRAIN EVE (Jon, 2026-11-26): admins, managers and the named trainers only — the route decides. */}
+      <TrainEve />
       <CompletedLine d={data} onChanged={reload} />
       {/* SPEED (Jon, 2026-11-20): the last thing on the page, asked for when it is about to be seen.
           Its scan (every active listing's calendar in Guesty, ~40s on the day's first run) used to

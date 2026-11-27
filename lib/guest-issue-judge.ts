@@ -27,6 +27,56 @@ const RESOLVED_RE = /\b(was resolved|resolved (?:on|during) the call|got it work
 const STRONG_SAFETY_RE = /\b(afraid|scared|unsafe|not safe|intrud(?:er|ed|ing)?|broke[rn]? in|break[- ]?in|stranger|911|gas leak|carbon monoxide|weapon|gun|assault(?:ed)?|threat(?:en(?:ed|ing)?)?|robbed|burglar|stalk|harass|smoke (?:in|coming|filling)|fire in|flooding|electrical shock|bleeding|ambulance)\b/i
 
 /**
+ * SAFETY WORDS THAT ARE NOT A SAFETY MATTER (Jon, 2026-11-26: "often get things wrong about security
+ * incidents"). Thirty days of Safety/security alerts were replayed against what customer care said
+ * back in Slack ("Not a safety concern. Need to deliver towels."). The word was there; the danger was
+ * not: a smoke ODOUR charge, a flooded PARKING LOT, a fire alarm INSPECTION, a deadbolt the guest did
+ * not understand, a street number 911, a guest who "threatened" a bad review, towels it was "unsafe to
+ * leave outside the door", a neighbourhood that "looks unsafe", a lock that failed and locked the guest
+ * OUT. Those phrases are taken out of the text before the safety test runs, so what is left still
+ * escalates: smoke in the unit, a unit flooding, a door that will not lock, somebody at the door.
+ */
+const NEAR = '[^.;·\\n]{0,45}'
+const BENIGN: RegExp[] = [
+  // smoke as a smell, a charge or a neighbour's cigarette, not a fire
+  new RegExp('\\b(?:cigar(?:ette)?|marijuana|weed|tobacco|vape)' + NEAR + 'smok\\w*', 'gi'),
+  new RegExp('\\bsmok\\w*' + '[^.;·\\n]{0,40}' + '\\b(?:odou?rs?|smells?|smelled|scent|charges?|fees?|fine|dispute|polic(?:y|ies)|damage|free|drifting|from (?:a |the )?(?:neighbou?r\\w*|people|outside|next door))\\b', 'gi'),
+  new RegExp('\\b(?:smells?|smelled|odou?r|stinks?|reeks?)' + '[^.;·\\n]{0,20}' + '\\bsmok\\w*', 'gi'),
+  // flooding outside the unit, or a worry about the weather
+  new RegExp('\\bflood\\w*' + NEAR + '\\b(?:parking|lot|street|streets|road|roads|area|neighbou?rhood|around the property|outside|weather|concerns?|warnings?|on tv|news)\\b', 'gi'),
+  new RegExp('\\b(?:parking|lot|street|streets|road|roads|area|storm|weather|worried about|concerned about|concern about|asked (?:about|whether))' + NEAR + 'flood\\w*', 'gi'),
+  // fire things that are not a fire
+  /\bfire[- ]?(?:alarm|sprinkler|safety|system|marshal|department)?\s*(?:inspections?|tests?|testing|drills?)\b/gi,
+  /\bfire\s?(?:stick|tv|extinguishers?|exit|escape|pit|place)\b/gi,
+  // a deadbolt that works but confused the guest or kept them out
+  /\bdeadbolt(?!\s+(?:is |was |will |does |did )?(?:broken|not|won'?t|doesn'?t|didn'?t|missing|fail\w*))/gi,
+  // 911 as a street number, not a call
+  /\b(?<!(?:call(?:ed|ing|s)?|dial(?:ed|ing|s)?|phoned?)\s(?:to\s)?)911\b/gi,
+  // a threat to our rating or our money, not to a person
+  new RegExp('\\bthreat\\w*' + '[^.;·\\n]{0,60}' + '\\b(?:reviews?|chargeback|dispute|refund|lawyer|attorney|legal|sue|report|airbnb|vrbo|booking(?:\\.com)?|expedia|bbb|cancel\\w*|complain\\w*|stars?)\\b', 'gi'),
+  // "afraid" as a figure of speech
+  /\b(?:i'?m|i am|we'?re|we are)\s+afraid\s+(?:that|we|i|it|this|you|there|not|so)\b/gi,
+  // unsafe as an opinion about the street, or about leaving a delivery at the door
+  /\bunsafe to leave\b/gi,
+  new RegExp('\\b(?:neighbou?rhood|area|exterior|surroundings|street|block|outside of the building)' + NEAR + '(?:unsafe|not safe)', 'gi'),
+  // a lock that failed and kept the guest OUT is an access problem
+  new RegExp('\\b(?:electronic |smart |door |keypad )?locks? (?:failed|fails|jammed|broken|malfunction\\w*)(?=' + '[^.;·\\n]{0,70}' + '(?:locked out|lock ?out|could ?n[o\']t (?:get in|enter|open)|unable to (?:get in|enter)))', 'gi'),
+]
+/** The text with the phrases above removed. Pure. */
+export function withoutBenignSafetyWords(text: string, taught: string[] = []): string {
+  let t = str(text)
+  // What the trainers marked "not a safety matter" on Today (lib/eve/train.ts): the same wording never pages again.
+  for (const p of taught) {
+    const ph = str(p).trim()
+    if (ph.length < 4) continue
+    let i = t.toLowerCase().indexOf(ph.toLowerCase())
+    while (i >= 0) { t = t.slice(0, i) + ' ' + t.slice(i + ph.length); i = t.toLowerCase().indexOf(ph.toLowerCase()) }
+  }
+  for (const re of BENIGN) t = t.replace(re, ' ')
+  return t
+}
+
+/**
  * NEVER SAFETY ON A WELCOME OR FEEDBACK CALL (Jon, 2026-11-05). A pre-arrival welcome call and a
  * post-checkout feedback call were labelled "Safety/security" — a guest asking where the fire
  * extinguisher is, or saying the smoke detector chirped last week. Nobody is in the unit on either
@@ -38,16 +88,16 @@ export function noSafetyCall(callKind: string | null | undefined): boolean {
 }
 
 /** One judgement for a call or a thread: how loud, and whether customer care needs telling at all. */
-export function judgeIssue(issues: string[], context: string, sentiment: string | null | undefined, opts: { followUp?: boolean; sentimentAlone?: boolean; callKind?: string | null } = {}): { severity: IssueSeverity; quiet: boolean; why: string } {
+export function judgeIssue(issues: string[], context: string, sentiment: string | null | undefined, opts: { followUp?: boolean; sentimentAlone?: boolean; callKind?: string | null; taught?: string[] } = {}): { severity: IssueSeverity; quiet: boolean; why: string } {
   const named = issues.map(s => str(s)).filter(Boolean)
   const namedText = named.join(' · ')
   const noSafety = noSafetyCall(opts.callKind)
   // Safety: the named issues, plus the unmistakable words wherever they appear — a guest describing
   // somebody at the door belongs here even when the model filed it under the summary, not issues[].
-  if (!noSafety && (SECURITY_RE.test(namedText) || STRONG_SAFETY_RE.test(str(context))))
+  if (!noSafety && (SECURITY_RE.test(withoutBenignSafetyWords(namedText, opts.taught)) || STRONG_SAFETY_RE.test(withoutBenignSafetyWords(context, opts.taught))))
     return { severity: 'security', quiet: false, why: 'safety words' }
   if (!named.length) return { severity: 'watch', quiet: false, why: 'nothing named' }
-  const concrete = named.filter(i => HARD_RE.test(i) || SECURITY_RE.test(i))
+  const concrete = named.filter(i => HARD_RE.test(i) || SECURITY_RE.test(i) || /\b(smok\w*|flood\w*|deadbolt)\b/i.test(i))
   if (!concrete.length && named.every(i => ROUTINE_RE.test(i))) return { severity: 'watch', quiet: false, why: 'routine ask' }
   const settled = RESOLVED_RE.test(str(context)) && opts.followUp !== true
   if (concrete.length) return { severity: 'issue', quiet: settled, why: settled ? 'concrete, settled on the call' : 'concrete' }
@@ -61,12 +111,13 @@ export function judgeIssue(issues: string[], context: string, sentiment: string 
 }
 
 /** Category, from the CAT_CHIPS vocabulary the Glitches board already files under. `noSafety`: a welcome / feedback call (noSafetyCall). */
-export function categoryFor(text: string, opts: { noSafety?: boolean } = {}): string {
+export function categoryFor(text: string, opts: { noSafety?: boolean; taught?: string[] } = {}): string {
   const t = text.toLowerCase()
-  if ((!opts.noSafety && SECURITY_RE.test(t)) || /\block|door|key|fob|entry|access|code\b/.test(t)) {
+  const safe = !opts.noSafety && SECURITY_RE.test(withoutBenignSafetyWords(t, opts.taught))
+  if (safe || /\block|door|key|fob|entry|access|code\b/.test(t)) {
     // An access problem that is only "the code did not work" is a building/access matter; a lock
     // that will not lock, or somebody at the door, is security.
-    if (!opts.noSafety && SECURITY_RE.test(t)) return 'Safety/Security Concern'
+    if (safe) return 'Safety/Security Concern'
     return 'Maintenance - Building/Common Areas'
   }
   if (/\b(a\/?c|air con|heat|hot|cold|temperature|hvac|thermostat)\b/.test(t)) return 'Maintenance - HVAC/Temperature'
@@ -84,7 +135,7 @@ export function categoryFor(text: string, opts: { noSafety?: boolean } = {}): st
 /** How loud. Security wins; otherwise a concrete fault is an issue and a grumble is a watch. */
 export function severityFor(text: string, sentiment?: string | null): IssueSeverity {
   const t = text.toLowerCase()
-  if (SECURITY_RE.test(t)) return 'security'
+  if (SECURITY_RE.test(withoutBenignSafetyWords(t))) return 'security'
   if (HARD_RE.test(t)) return 'issue'
   if (sentiment === 'unhappy' || sentiment === 'negative') return 'issue'
   return 'watch'

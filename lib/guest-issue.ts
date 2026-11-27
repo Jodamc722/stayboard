@@ -63,7 +63,14 @@ export const SEV_LABEL: Record<IssueSeverity, string> = {
 // ── READING WHAT WE ALREADY HEARD ───────────────────────────────────────────────────────────────
 
 /** Calls whose intel names something wrong, in the window, that we have not judged yet. */
+/** Wordings the trainers marked "not a safety matter" on Today (app_settings guest_issue_not_safety). Never throws. */
+export const NOT_SAFETY_KEY = 'guest_issue_not_safety'
+async function taughtNotSafety(): Promise<string[]> {
+  try { const { getSetting } = await import('./app-settings'); const v = await getSetting<any>(NOT_SAFETY_KEY, []); return Array.isArray(v) ? v.map(String).filter(Boolean).slice(0, 400) : [] } catch { return [] }
+}
+
 async function fromCalls(sinceISO: string, seen: Set<string>): Promise<Detection[]> {
+  const taught = await taughtNotSafety()
   const db = supabaseAdmin()
   const { data } = await db.from('talkroute_calls')
     .select('id, call_at, direction, duration, reservation_id, summary, intel, external_number, match_kind')
@@ -97,7 +104,7 @@ async function fromCalls(sinceISO: string, seen: Set<string>): Promise<Detection
     // mentions "the code" and "cancel" often enough that it made ordinary calls into Guest issues.
     // A welcome or post-checkout call is never a safety matter (Jon, 2026-11-05) — see noSafetyCall.
     const callKind = str(c.match_kind)
-    const j = judgeIssue(issues, str(intel.summary), sentiment, { followUp: intel.followUp === true, callKind })
+    const j = judgeIssue(issues, str(intel.summary), sentiment, { followUp: intel.followUp === true, callKind, taught })
     out.push({
       sourceKey: 'call:' + c.id,
       kind: 'call',
@@ -112,7 +119,7 @@ async function fromCalls(sinceISO: string, seen: Set<string>): Promise<Detection
       quiet: j.quiet,
       judged: j.why,
       waiting: guestWaitingNow({ kind: 'call', callAt: str(c.call_at), followUp: intel.followUp === true, callKind }),
-      category: categoryFor(issues.length ? issues.join(' · ') : blob, { noSafety: noSafetyCall(callKind) }),
+      category: categoryFor(issues.length ? issues.join(' · ') : blob, { noSafety: noSafetyCall(callKind), taught }),
       headline: clean(intel.summary || issues[0], 400),
       issues,
       evidence: clean(intel.summary, 600),
@@ -124,6 +131,7 @@ async function fromCalls(sinceISO: string, seen: Set<string>): Promise<Detection
 
 /** Guest threads the sentiment scan has already judged unhappy, that we have not acted on. */
 async function fromThreads(sinceISO: string, seen: Set<string>): Promise<Detection[]> {
+  const taught = await taughtNotSafety()
   const db = supabaseAdmin()
   const { data } = await db.from('guesty_conversation_sentiment')
     .select('conversation_id, guest_name, channel, reservation_id, listing_id, score, band, dissatisfied, triggers, top_issue, reason, guest_excerpt, last_guest_at, last_message_at, scanned_at, status, complaint, mood')
@@ -150,7 +158,7 @@ async function fromThreads(sinceISO: string, seen: Set<string>): Promise<Detecti
     const blob = [str(s.top_issue), str(s.reason), str(s.guest_excerpt), triggers.join(' ')].join(' ')
     // The scan's top issue and triggers are the "named" side; the guest's own words are the context.
     const named = [clean(s.top_issue, 160), ...triggers.map(x => clean(x, 120))].filter(Boolean)
-    const j = judgeIssue(named, [str(s.reason), str(s.guest_excerpt)].join(' '), s.dissatisfied ? 'unhappy' : null, { followUp: true, sentimentAlone: true })
+    const j = judgeIssue(named, [str(s.reason), str(s.guest_excerpt)].join(' '), s.dissatisfied ? 'unhappy' : null, { followUp: true, sentimentAlone: true, taught })
     out.push({
       sourceKey: 'thread:' + s.conversation_id,
       kind: 'message',
@@ -165,7 +173,7 @@ async function fromThreads(sinceISO: string, seen: Set<string>): Promise<Detecti
       quiet: j.quiet,
       judged: j.why,
       waiting: guestWaitingNow({ kind: 'message', lastGuestAt: str(s.last_guest_at) || null, lastMessageAt: str(s.last_message_at) || null }),
-      category: categoryFor(blob),
+      category: categoryFor(blob, { taught }),
       headline: clean(s.top_issue || s.reason, 400),
       issues: [clean(s.top_issue, 160)].filter(Boolean),
       evidence: clean(s.guest_excerpt || s.reason, 600),
